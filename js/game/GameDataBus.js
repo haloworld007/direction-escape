@@ -22,11 +22,13 @@ export default class GameDataBus {
   isDeadlock = false;       // 是否死局
   pool = new Pool();         // 对象池
 
-  // 道具数量
+  // 道具数量（PRD v1.3: 4种道具）
   items = {
-    grab: 3,        // 抓走道具
-    flip: 2,        // 翻转道具
-    shuffle: 1      // 洗牌道具
+    grab: 3,          // 抓走道具
+    flip: 2,          // 翻转道具
+    shufflePos: 1,    // 洗牌道具（位置）
+    shuffleDir: 1,    // 洗牌道具（方向）
+    shuffle: 1        // 兼容旧版本
   };
 
   constructor() {

@@ -12,13 +12,7 @@ export default class LevelManager {
    * @returns {Object} 关卡数据 { blocks: Block[], total: number }
    */
   generateLevel(levelNumber) {
-    // 第1关使用特殊的简单布局
-    if (levelNumber === 1) {
-      const levelData = LevelGenerator.generateLevel1(canvas.width, canvas.height);
-      return this.createBlockInstances(levelData);
-    }
-
-    // 其他关卡使用算法生成
+    // 所有关卡统一使用算法生成（包括Level 1）
     const levelData = LevelGenerator.generate(levelNumber, canvas.width, canvas.height);
     return this.createBlockInstances(levelData);
   }
