@@ -74,7 +74,7 @@ export const BLOCK_SIZES = {
  * 按钮尺寸
  */
 export const BUTTON_SIZES = {
-  PROP: 60,           // 道具按钮（缩小以适应屏幕）
+  PROP: 75,           // 道具按钮（更大更醒目）
   SETTINGS: 44,       // 设置按钮
   PRIMARY: {          // 主按钮
     WIDTH: 180,
@@ -91,14 +91,14 @@ export const BUTTON_SIZES = {
  */
 export const LAYOUT = {
   TOP_BAR_HEIGHT: 60,        // 顶部栏高度
-  BOTTOM_BAR_HEIGHT: 90,     // 底部道具栏高度（缩小以适应屏幕）
+  BOTTOM_BAR_HEIGHT: 110,    // 底部道具栏高度（增大以容纳更大按钮）
   PROGRESS_BAR_HEIGHT: 12,   // 进度条高度
-  SIDE_PADDING: 16,          // 左右边距（减小以增加棋盘空间）
+  SIDE_PADDING: 16,          // 左右边距
   TOP_PADDING: 16,           // 顶部边距
 
   // 棋盘区域（关卡UI与关卡生成必须共用同一套参数）
-  BOARD_TOP_OFFSET: 50,      // 顶部栏下方预留（进度/标题区域）
-  BOARD_BOTTOM_MARGIN: 12    // 棋盘与底部道具栏之间的间距
+  BOARD_TOP_OFFSET: 60,      // 顶部栏下方预留（进度/标题区域）
+  BOARD_BOTTOM_MARGIN: 10    // 棋盘与底部道具栏之间的间距
 };
 
 // ==================== 字体规范 ====================

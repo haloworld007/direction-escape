@@ -39,13 +39,13 @@ export default class GameRenderer {
   }
 
   /**
-   * 初始化道具按钮（4个圆角矩形按钮）
+   * 初始化道具按钮（4个圆角矩形按钮 - 更大更醒目）
    */
   initPropButtons(items) {
     const screenWidth = canvas.width;
     const screenHeight = canvas.height;
-    const bottomY = screenHeight - LAYOUT.BOTTOM_BAR_HEIGHT / 2 - 8; // 上移一点，留出标签空间
-    const buttonSpacing = 10;  // 减小间距适应更小按钮
+    const bottomY = screenHeight - LAYOUT.BOTTOM_BAR_HEIGHT / 2 - 12; // 上移，留出标签空间
+    const buttonSpacing = 8;   // 按钮间距
     const buttonSize = BUTTON_SIZES.PROP;
     
     // 4个按钮的总宽度
@@ -115,64 +115,80 @@ export default class GameRenderer {
   }
 
   /**
-   * 绘制背景（木质纹理）
+   * 绘制背景（浅绿色草地风格）
    */
   drawBackground(ctx) {
     const screenWidth = canvas.width;
     const screenHeight = canvas.height;
 
-    // 木质背景渐变
+    // 浅绿色草地背景渐变
     const gradient = ctx.createLinearGradient(0, 0, 0, screenHeight);
-    gradient.addColorStop(0, '#8B7355');
-    gradient.addColorStop(0.3, '#6B4423');
-    gradient.addColorStop(0.7, '#5D3A1A');
-    gradient.addColorStop(1, '#4A2C0F');
+    gradient.addColorStop(0, '#A8D86B');   // 顶部浅绿
+    gradient.addColorStop(0.5, '#9ACD32'); // 中部草绿
+    gradient.addColorStop(1, '#8BC34A');   // 底部稍深
 
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, screenWidth, screenHeight);
 
-    // 木纹效果
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
-    ctx.lineWidth = 1;
-    for (let i = 0; i < screenHeight; i += 12) {
-      ctx.beginPath();
-      ctx.moveTo(0, i);
-      ctx.lineTo(screenWidth, i + (Math.random() - 0.5) * 4);
-      ctx.stroke();
-    }
-
-    // 顶部绿叶装饰
-    this.drawLeafDecoration(ctx, screenWidth);
+    // 绘制随机小花和草装饰
+    this.drawGrassDecorations(ctx, screenWidth, screenHeight);
   }
 
   /**
-   * 绘制顶部绿叶装饰（缩小高度，避免遮挡标题）
+   * 绘制草地装饰（小花、草叶）
    */
-  drawLeafDecoration(ctx, screenWidth) {
-    // 更小的绿叶装饰，只在顶部边缘
-    const leafGradient = ctx.createLinearGradient(0, 0, 0, 35);
-    leafGradient.addColorStop(0, '#2E7D32');
-    leafGradient.addColorStop(1, 'transparent');
-
-    ctx.fillStyle = leafGradient;
+  drawGrassDecorations(ctx, screenWidth, screenHeight) {
+    // 使用固定种子的随机数，确保每帧装饰位置一致
+    const decorations = this.getGrassDecorationPositions(screenWidth, screenHeight);
     
-    // 左侧叶子（更小更紧凑）
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.quadraticCurveTo(25, 15, 50, 0);
-    ctx.quadraticCurveTo(40, 20, 75, 5);
-    ctx.quadraticCurveTo(50, 30, 0, 35);
-    ctx.closePath();
-    ctx.fill();
+    decorations.forEach(dec => {
+      ctx.save();
+      ctx.globalAlpha = 0.6;
+      
+      if (dec.type === 'flower') {
+        // 小花
+        ctx.fillStyle = dec.color;
+        ctx.beginPath();
+        ctx.arc(dec.x, dec.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+        // 花心
+        ctx.fillStyle = '#FFD700';
+        ctx.beginPath();
+        ctx.arc(dec.x, dec.y, 2, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (dec.type === 'grass') {
+        // 小草叶
+        ctx.strokeStyle = '#7CB342';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(dec.x, dec.y);
+        ctx.quadraticCurveTo(dec.x + 3, dec.y - 8, dec.x + 1, dec.y - 12);
+        ctx.stroke();
+      }
+      
+      ctx.restore();
+    });
+  }
 
-    // 右侧叶子（更小更紧凑）
-    ctx.beginPath();
-    ctx.moveTo(screenWidth, 0);
-    ctx.quadraticCurveTo(screenWidth - 25, 15, screenWidth - 50, 0);
-    ctx.quadraticCurveTo(screenWidth - 40, 20, screenWidth - 75, 5);
-    ctx.quadraticCurveTo(screenWidth - 50, 30, screenWidth, 35);
-    ctx.closePath();
-    ctx.fill();
+  /**
+   * 获取草地装饰位置（缓存以避免每帧重新计算）
+   */
+  getGrassDecorationPositions(screenWidth, screenHeight) {
+    if (!this._grassDecorations) {
+      this._grassDecorations = [];
+      const flowerColors = ['#FFB6C1', '#FFFFFF', '#FFE4B5', '#E6E6FA'];
+      
+      // 生成随机装饰
+      for (let i = 0; i < 30; i++) {
+        const x = Math.random() * screenWidth;
+        const y = 100 + Math.random() * (screenHeight - 200);
+        const type = Math.random() > 0.5 ? 'flower' : 'grass';
+        const color = flowerColors[Math.floor(Math.random() * flowerColors.length)];
+        this._grassDecorations.push({ x, y, type, color });
+      }
+    }
+    return this._grassDecorations;
   }
 
   /**
@@ -203,49 +219,98 @@ export default class GameRenderer {
   }
 
   /**
-   * 绘制顶部左侧2x2功能区
+   * 绘制顶部左侧2x2功能区（优化版：更圆润+文字标签）
    */
   drawTopFunctionButtons(ctx) {
     const startX = LAYOUT.SIDE_PADDING;
-    const startY = 10;
-    const buttonSize = 44;
-    const gap = 6;
+    const startY = 12;
+    const buttonSize = 50;  // 稍大的按钮
+    const gap = 8;
 
     const buttons = [
-      { type: 'settings', icon: '⚙', color: '#4CAF50', row: 0, col: 0 },
-      { type: 'undo', icon: '↩', color: '#03A9F4', row: 0, col: 1, hasAd: true },
-      { type: 'background', icon: '👕', color: '#FFFFFF', row: 1, col: 0, text: '背景' },
-      { type: 'pureColor', icon: '🐻', color: '#8BC34A', row: 1, col: 1, text: '纯色模式' }
+      { type: 'settings', icon: '⚙️', color: '#4CAF50', row: 0, col: 0 },
+      { type: 'undo', icon: '↩️', color: '#03A9F4', row: 0, col: 1, hasAd: true },
+      { type: 'background', icon: '👕', color: '#FFFFFF', row: 1, col: 0, label: '背景' },
+      { type: 'pureColor', icon: '🐻', color: '#8BC34A', row: 1, col: 1, label: '纯色模式' }
     ];
 
     buttons.forEach(btn => {
       const x = startX + btn.col * (buttonSize + gap);
-      const y = startY + btn.row * (buttonSize + gap);
+      const y = startY + btn.row * (buttonSize + gap + (btn.label ? 14 : 0));
 
-      // 按钮背景
-      ctx.fillStyle = btn.color;
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-      ctx.shadowBlur = 4;
-      ctx.shadowOffsetY = 2;
-      drawRoundRect(ctx, x, y, buttonSize, buttonSize, 8);
+      // 按钮背景（更圆润）
+      ctx.save();
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
+      ctx.shadowBlur = 6;
+      ctx.shadowOffsetY = 3;
+      
+      // 渐变背景
+      const btnGradient = ctx.createLinearGradient(x, y, x, y + buttonSize);
+      const baseColor = btn.color;
+      btnGradient.addColorStop(0, this.lightenColor(baseColor, 20));
+      btnGradient.addColorStop(0.5, baseColor);
+      btnGradient.addColorStop(1, this.darkenColor(baseColor, 10));
+      ctx.fillStyle = btnGradient;
+      
+      drawRoundRect(ctx, x, y, buttonSize, buttonSize, 12);  // 更大圆角
       ctx.fill();
-      ctx.shadowColor = 'transparent';
+      
+      // 高光边框
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.restore();
 
       // 图标
       ctx.fillStyle = btn.color === '#FFFFFF' ? '#333' : '#FFF';
-      ctx.font = `${buttonSize * 0.5}px Arial`;
+      ctx.font = `${buttonSize * 0.45}px Arial`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(btn.icon, x + buttonSize / 2, y + buttonSize / 2);
 
       // 视频广告标记
       if (btn.hasAd) {
-        this.drawSmallAdBadge(ctx, x + buttonSize - 8, y + 8);
+        this.drawSmallAdBadge(ctx, x + buttonSize - 6, y + 6);
+      }
+
+      // 文字标签（在按钮下方）
+      if (btn.label) {
+        ctx.fillStyle = '#333';
+        ctx.font = 'bold 10px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(btn.label, x + buttonSize / 2, y + buttonSize + 3);
       }
 
       // 保存按钮区域
       this.topButtons[btn.type] = { x, y, width: buttonSize, height: buttonSize };
     });
+  }
+
+  /**
+   * 颜色变亮
+   */
+  lightenColor(color, percent) {
+    if (color === '#FFFFFF') return '#FFFFFF';
+    const num = parseInt(color.replace('#', ''), 16);
+    const amt = Math.round(2.55 * percent);
+    const R = Math.min(255, (num >> 16) + amt);
+    const G = Math.min(255, (num >> 8 & 0x00FF) + amt);
+    const B = Math.min(255, (num & 0x0000FF) + amt);
+    return '#' + (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1);
+  }
+
+  /**
+   * 颜色变暗
+   */
+  darkenColor(color, percent) {
+    if (color === '#FFFFFF') return '#F0F0F0';
+    const num = parseInt(color.replace('#', ''), 16);
+    const amt = Math.round(2.55 * percent);
+    const R = Math.max(0, (num >> 16) - amt);
+    const G = Math.max(0, (num >> 8 & 0x00FF) - amt);
+    const B = Math.max(0, (num & 0x0000FF) - amt);
+    return '#' + (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1);
   }
 
   /**
@@ -342,94 +407,120 @@ export default class GameRenderer {
   }
 
   /**
-   * 绘制进度显示（PRD: 右上角动物头像 + 进度百分比）
+   * 绘制进度显示（可爱小猴子 + 进度百分比）
    */
   drawProgress(ctx, databus) {
     const progress = databus.getProgress();
     const rightX = canvas.width - LAYOUT.SIDE_PADDING;
-    const progressY = 70;
+    const monkeyX = rightX - 30;
+    const monkeyY = 75;
 
-    // 小熊猫头像
+    ctx.save();
+    
+    // 小猴子身体
     ctx.fillStyle = '#D2691E';
     ctx.beginPath();
-    ctx.arc(rightX - 25, progressY, 18, 0, Math.PI * 2);
+    ctx.ellipse(monkeyX, monkeyY + 25, 12, 15, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 小猴子头部
+    ctx.fillStyle = '#D2691E';
+    ctx.beginPath();
+    ctx.arc(monkeyX, monkeyY, 18, 0, Math.PI * 2);
     ctx.fill();
 
     // 耳朵
-    ctx.fillStyle = '#8B4513';
+    ctx.fillStyle = '#FFE4C4';
     ctx.beginPath();
-    ctx.arc(rightX - 38, progressY - 12, 8, 0, Math.PI * 2);
-    ctx.arc(rightX - 12, progressY - 12, 8, 0, Math.PI * 2);
+    ctx.arc(monkeyX - 16, monkeyY - 8, 7, 0, Math.PI * 2);
+    ctx.arc(monkeyX + 16, monkeyY - 8, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#DEB887';
+    ctx.beginPath();
+    ctx.arc(monkeyX - 16, monkeyY - 8, 4, 0, Math.PI * 2);
+    ctx.arc(monkeyX + 16, monkeyY - 8, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 脸部（浅色）
+    ctx.fillStyle = '#FFE4C4';
+    ctx.beginPath();
+    ctx.ellipse(monkeyX, monkeyY + 4, 12, 10, 0, 0, Math.PI * 2);
     ctx.fill();
 
     // 眼睛
     ctx.fillStyle = '#FFF';
     ctx.beginPath();
-    ctx.arc(rightX - 30, progressY - 2, 5, 0, Math.PI * 2);
-    ctx.arc(rightX - 20, progressY - 2, 5, 0, Math.PI * 2);
+    ctx.ellipse(monkeyX - 6, monkeyY - 2, 5, 6, 0, 0, Math.PI * 2);
+    ctx.ellipse(monkeyX + 6, monkeyY - 2, 5, 6, 0, 0, Math.PI * 2);
     ctx.fill();
-
+    
+    // 眼珠
     ctx.fillStyle = '#333';
     ctx.beginPath();
-    ctx.arc(rightX - 30, progressY - 2, 2, 0, Math.PI * 2);
-    ctx.arc(rightX - 20, progressY - 2, 2, 0, Math.PI * 2);
+    ctx.arc(monkeyX - 5, monkeyY - 1, 3, 0, Math.PI * 2);
+    ctx.arc(monkeyX + 7, monkeyY - 1, 3, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // 眼睛高光
+    ctx.fillStyle = '#FFF';
+    ctx.beginPath();
+    ctx.arc(monkeyX - 6, monkeyY - 2, 1, 0, Math.PI * 2);
+    ctx.arc(monkeyX + 6, monkeyY - 2, 1, 0, Math.PI * 2);
     ctx.fill();
 
-    // 进度文字
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = `bold ${FONT_SIZES.HINT}px Arial`;
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'top';
-    ctx.fillText(`进度${progress}%`, rightX, progressY + 25);
-  }
-
-  /**
-   * 绘制棋盘区域
-   */
-  drawBoardArea(ctx, databus) {
-    const boardRect = getBoardRect(canvas.width, canvas.height);
-    const boardY = boardRect.y;
-    const boardHeight = boardRect.height;
-
-    // 棋盘背景（深棕色木质效果）
-    ctx.save();
-
-    const boardGradient = ctx.createLinearGradient(0, boardY, 0, boardY + boardHeight);
-    boardGradient.addColorStop(0, '#5D4037');
-    boardGradient.addColorStop(0.5, '#4E342E');
-    boardGradient.addColorStop(1, '#3E2723');
-
-    ctx.fillStyle = boardGradient;
-
-    const boardPadding = boardRect.x;
-    const boardWidth = boardRect.width;
-    drawRoundRect(ctx, boardPadding, boardY, boardWidth, boardHeight, 15);
+    // 鼻子
+    ctx.fillStyle = '#8B4513';
+    ctx.beginPath();
+    ctx.ellipse(monkeyX, monkeyY + 5, 3, 2, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // 木质纹理线条
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.15)';
-    ctx.lineWidth = 1;
-    for (let i = 0; i < boardHeight; i += 10) {
-      ctx.beginPath();
-      ctx.moveTo(boardPadding, boardY + i);
-      ctx.lineTo(boardPadding + boardWidth, boardY + i);
-      ctx.stroke();
-    }
+    // 嘴巴
+    ctx.strokeStyle = '#8B4513';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(monkeyX, monkeyY + 6, 4, 0.2, Math.PI - 0.2);
+    ctx.stroke();
 
-    // 边框
-    ctx.strokeStyle = '#3E2723';
-    ctx.lineWidth = 3;
-    drawRoundRect(ctx, boardPadding, boardY, boardWidth, boardHeight, 15);
+    // 手臂（挥手姿势）
+    ctx.fillStyle = '#D2691E';
+    ctx.beginPath();
+    ctx.ellipse(monkeyX + 18, monkeyY + 15, 5, 10, 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // 头发/头顶毛发
+    ctx.strokeStyle = '#8B4513';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(monkeyX - 3, monkeyY - 16);
+    ctx.lineTo(monkeyX - 5, monkeyY - 22);
+    ctx.moveTo(monkeyX + 3, monkeyY - 16);
+    ctx.lineTo(monkeyX + 5, monkeyY - 22);
     ctx.stroke();
 
     ctx.restore();
 
-    // 保存棋盘区域信息
+    // 进度文字（黑色，更醒目）
+    ctx.fillStyle = '#333';
+    ctx.font = `bold ${FONT_SIZES.HINT}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`进度${progress}%`, monkeyX, monkeyY + 50);
+  }
+
+  /**
+   * 绘制棋盘区域（无边框，方块直接在绿色背景上）
+   */
+  drawBoardArea(ctx, databus) {
+    const boardRect = getBoardRect(canvas.width, canvas.height);
+    
+    // 不绘制棋盘背景，让方块直接显示在绿色草地上
+    // 只保存棋盘区域信息用于布局计算
     this.boardArea = { ...boardRect };
   }
 
   /**
-   * 绘制底部道具栏（美化版）
+   * 绘制底部道具栏（效果图风格 - 半透明）
    */
   drawBottomBar(ctx) {
     const screenWidth = canvas.width;
@@ -437,21 +528,16 @@ export default class GameRenderer {
     const bottomBarHeight = LAYOUT.BOTTOM_BAR_HEIGHT;
     const bottomY = screenHeight - bottomBarHeight;
 
-    // 渐变背景（更有层次感）
+    // 半透明渐变背景（与绿色草地融合）
     const bgGradient = ctx.createLinearGradient(0, bottomY, 0, screenHeight);
-    bgGradient.addColorStop(0, 'rgba(62, 39, 35, 0.9)');
-    bgGradient.addColorStop(0.3, 'rgba(55, 35, 30, 0.95)');
-    bgGradient.addColorStop(1, 'rgba(45, 28, 22, 0.98)');
+    bgGradient.addColorStop(0, 'rgba(139, 195, 74, 0.3)');  // 浅绿半透明
+    bgGradient.addColorStop(0.5, 'rgba(104, 159, 56, 0.5)');
+    bgGradient.addColorStop(1, 'rgba(85, 139, 47, 0.6)');
     ctx.fillStyle = bgGradient;
     ctx.fillRect(0, bottomY, screenWidth, bottomBarHeight);
 
-    // 顶部高光线
-    const highlightGradient = ctx.createLinearGradient(0, bottomY, screenWidth, bottomY);
-    highlightGradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
-    highlightGradient.addColorStop(0.3, 'rgba(255, 255, 255, 0.15)');
-    highlightGradient.addColorStop(0.7, 'rgba(255, 255, 255, 0.15)');
-    highlightGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-    ctx.strokeStyle = highlightGradient;
+    // 顶部分隔线（淡）
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(0, bottomY);
@@ -465,11 +551,10 @@ export default class GameRenderer {
       }
     });
 
-    // 道具名称标签（更清晰）
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-    ctx.font = `${FONT_SIZES.HINT - 3}px Arial`;
+    // 道具名称标签（黑色描边白字）
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
+    ctx.font = `bold ${FONT_SIZES.HINT - 2}px Arial`;
 
     const propNames = {
       grab: '抓走',
@@ -480,7 +565,14 @@ export default class GameRenderer {
 
     Object.entries(this.propButtons).forEach(([type, button]) => {
       if (button) {
-        ctx.fillText(propNames[type] || type, button.x, button.y + button.height / 2 + 6);
+        const labelY = button.y + button.height / 2 + 8;
+        // 描边
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.lineWidth = 3;
+        ctx.strokeText(propNames[type] || type, button.x, labelY);
+        // 文字
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillText(propNames[type] || type, button.x, labelY);
       }
     });
   }

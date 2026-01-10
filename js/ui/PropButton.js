@@ -99,43 +99,54 @@ export default class PropButton {
   }
 
   /**
-   * 绘制按钮主体（圆角矩形）
+   * 绘制按钮主体（圆角矩形 - 效果图风格）
    */
   drawButtonBody(ctx) {
     const color = getPropColor(this.type);
     const left = this.x - this.width / 2;
     const top = this.y - this.height / 2;
 
-    // 阴影
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-    ctx.shadowBlur = 8;
-    ctx.shadowOffsetY = 4;
+    // 更强的阴影
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 5;
 
-    // 渐变背景
+    // 更鲜艳的渐变背景
     const gradient = ctx.createLinearGradient(left, top, left, top + this.height);
-    gradient.addColorStop(0, this.lightenColor(color, 20));
-    gradient.addColorStop(0.5, color);
-    gradient.addColorStop(1, this.darkenColor(color, 15));
+    gradient.addColorStop(0, this.lightenColor(color, 30));
+    gradient.addColorStop(0.3, this.lightenColor(color, 15));
+    gradient.addColorStop(0.7, color);
+    gradient.addColorStop(1, this.darkenColor(color, 20));
 
     ctx.fillStyle = gradient;
 
-    // 绘制圆角矩形按钮
-    drawRoundRect(ctx, left, top, this.width, this.height, this.cornerRadius);
+    // 绘制圆角矩形按钮（更大圆角）
+    const cornerRadius = 14;
+    drawRoundRect(ctx, left, top, this.width, this.height, cornerRadius);
     ctx.fill();
 
-    // 高光边框
+    // 清除阴影
     ctx.shadowColor = 'transparent';
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-    ctx.lineWidth = 2;
+    
+    // 深色边框（底部）
+    ctx.strokeStyle = this.darkenColor(color, 35);
+    ctx.lineWidth = 3;
     ctx.stroke();
 
-    // 内部高光
-    const highlightGradient = ctx.createLinearGradient(left, top, left, top + this.height / 2);
-    highlightGradient.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
+    // 顶部高光（玻璃效果）
+    const highlightGradient = ctx.createLinearGradient(left, top, left, top + this.height * 0.4);
+    highlightGradient.addColorStop(0, 'rgba(255, 255, 255, 0.5)');
+    highlightGradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.25)');
     highlightGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
     ctx.fillStyle = highlightGradient;
-    drawRoundRect(ctx, left + 2, top + 2, this.width - 4, this.height / 2, this.cornerRadius - 2);
+    drawRoundRect(ctx, left + 3, top + 3, this.width - 6, this.height * 0.4, cornerRadius - 3);
     ctx.fill();
+
+    // 内部高光边框
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.lineWidth = 1.5;
+    drawRoundRect(ctx, left + 2, top + 2, this.width - 4, this.height - 4, cornerRadius - 2);
+    ctx.stroke();
   }
 
   /**

@@ -44,25 +44,24 @@ export default class BlockRenderer {
   }
 
   /**
-   * 绘制动物身体（胶囊状）- 美化版
+   * 绘制动物身体（胶囊状）- 效果图风格
    */
   static drawAnimalBody(ctx, x, y, width, height, direction, animalType) {
     const color = getAnimalColor(animalType);
     const bodyLength = Math.max(width, height);
     const bodyWidth = Math.min(width, height);
 
-    // 增强阴影效果（更立体）
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
-    ctx.shadowBlur = 8;
+    // 阴影效果（更强烈）
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+    ctx.shadowBlur = 6;
     ctx.shadowOffsetX = 2;
-    ctx.shadowOffsetY = 4;
+    ctx.shadowOffsetY = 3;
 
-    // 身体渐变（更丰富的层次）
-    const gradient = ctx.createLinearGradient(x, y, x + width * 0.3, y + height);
-    gradient.addColorStop(0, this.lightenColor(color, 30));
-    gradient.addColorStop(0.3, this.lightenColor(color, 15));
-    gradient.addColorStop(0.6, color);
-    gradient.addColorStop(1, this.darkenColor(color, 20));
+    // 身体渐变
+    const gradient = ctx.createLinearGradient(x, y, x, y + height);
+    gradient.addColorStop(0, this.lightenColor(color, 25));
+    gradient.addColorStop(0.4, color);
+    gradient.addColorStop(1, this.darkenColor(color, 15));
 
     ctx.fillStyle = gradient;
 
@@ -71,32 +70,25 @@ export default class BlockRenderer {
     drawRoundRect(ctx, x, y, width, height, radius);
     ctx.fill();
 
-    // 清除阴影用于后续绘制
+    // 清除阴影
     ctx.shadowColor = 'transparent';
     ctx.shadowBlur = 0;
     ctx.shadowOffsetX = 0;
     ctx.shadowOffsetY = 0;
 
-    // 顶部高光效果（更明显）
-    const highlightGradient = ctx.createLinearGradient(x, y, x, y + height * 0.35);
-    highlightGradient.addColorStop(0, 'rgba(255, 255, 255, 0.5)');
-    highlightGradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.2)');
-    highlightGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-    ctx.fillStyle = highlightGradient;
-    drawRoundRect(ctx, x + 1, y + 1, width - 2, height * 0.35, radius - 1);
-    ctx.fill();
-
-    // 边框（更柔和）
-    ctx.strokeStyle = this.darkenColor(color, 30);
-    ctx.lineWidth = 1;
+    // 明显的深色边框（效果图风格）
+    ctx.strokeStyle = this.darkenColor(color, 45);
+    ctx.lineWidth = 2;
     drawRoundRect(ctx, x, y, width, height, radius);
     ctx.stroke();
 
-    // 内发光效果
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-    ctx.lineWidth = 1;
-    drawRoundRect(ctx, x + 1, y + 1, width - 2, height - 2, radius - 1);
-    ctx.stroke();
+    // 顶部高光
+    const highlightGradient = ctx.createLinearGradient(x, y, x, y + height * 0.3);
+    highlightGradient.addColorStop(0, 'rgba(255, 255, 255, 0.45)');
+    highlightGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = highlightGradient;
+    drawRoundRect(ctx, x + 2, y + 2, width - 4, height * 0.3, radius - 2);
+    ctx.fill();
 
     // 绘制动物特征
     this.drawAnimalFeatures(ctx, x, y, width, height, direction, animalType);

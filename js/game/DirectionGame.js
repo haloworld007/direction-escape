@@ -548,10 +548,10 @@ export default class DirectionGame {
       // 绘制游戏界面
       this.gameRenderer.render(ctx, databus);
 
-      // 绘制方块
+      // 绘制方块（包括正在滑出的方块）
       databus.blocks.forEach(block => {
-        if (!block.isRemoved && block.visible) {
-          // 使用新的方块渲染器
+        // 只要方块可见就渲染（让滑出动画完整播放）
+        if (block.visible) {
           BlockRenderer.render(ctx, block);
         }
       });
