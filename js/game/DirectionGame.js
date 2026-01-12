@@ -14,6 +14,7 @@ import MenuRenderer from '../ui/MenuRenderer';
 import GameRenderer from '../ui/GameRenderer';
 import ModalRenderer from '../ui/ModalRenderer';
 import BlockRenderer from '../ui/BlockRenderer';
+import AudioManager from '../audio/AudioManager';
 
 const ctx = canvas.getContext('2d');
 
@@ -31,6 +32,9 @@ export default class DirectionGame {
     this.gameRenderer = new GameRenderer();
     this.modalRenderer = new ModalRenderer();
 
+    // 音频管理器
+    this.audioManager = new AudioManager();
+
     // 游戏状态
     this.state = 'menu'; // menu, playing, victory, defeat
     this.aniId = 0;
@@ -43,6 +47,9 @@ export default class DirectionGame {
 
     // 启动游戏循环
     this.aniId = requestAnimationFrame(this.loop.bind(this));
+
+    // 播放主菜单背景音乐
+    this.audioManager.playBGM('menu');
 
     console.log('[DirectionGame] 游戏初始化完成，状态: menu');
   }
@@ -83,6 +90,9 @@ export default class DirectionGame {
     // 检查开始游戏按钮
     const startButton = this.menuRenderer.getButton('start');
     if (startButton && startButton.isClicked(x, y)) {
+      // 播放按钮点击音效
+      this.audioManager.playSFX('buttonClick');
+
       startButton.press();
       setTimeout(() => {
         startButton.release();
@@ -142,6 +152,8 @@ export default class DirectionGame {
     for (const type of propButtons) {
       const button = this.gameRenderer.getPropButton(type);
       if (button && button.isClicked(x, y)) {
+        // 播放按钮点击音效
+        this.audioManager.playSFX('buttonClick');
         this.handlePropButtonClick(type);
         return;
       }
@@ -168,6 +180,7 @@ export default class DirectionGame {
     // 检查道具数量
     if (databus.items[type] <= 0) {
       console.log('[DirectionGame] 道具数量不足');
+      this.modalRenderer.showToast('道具数量不足');
       return;
     }
 
@@ -175,7 +188,8 @@ export default class DirectionGame {
     if (type === 'grab') {
       // 进入抓取模式
       this.propMode = 'grab';
-      console.log('[DirectionGame] 进入抓取模式，请点击要移除的方块');
+      this.modalRenderer.showToast('点击要移除的方块', 2000);
+      console.log('[DirectionGame] 进入抓取模式');
     } else if (type === 'flip') {
       // 直接使用翻转道具
       this.useFlipProp();
@@ -242,6 +256,9 @@ export default class DirectionGame {
 
     if (!databus.useItem('flip')) return;
 
+    // 播放道具使用音效
+    this.audioManager.playSFX('propUse');
+
     // 翻转所有方块
     databus.blocks.forEach(block => {
       if (!block.isRemoved) {
@@ -252,10 +269,11 @@ export default class DirectionGame {
     // 更新UI
     this.gameRenderer.updatePropCount('flip', databus.items.flip);
 
-    // 检查死局
-    this.checkDeadlock();
-
+    // 不立即检测死局，让玩家先操作
+    // 死局检测只会在玩家点击方块后进行
     console.log('[DirectionGame] 使用了翻转道具');
+
+    this.modalRenderer.showToast('已翻转所有方块');
   }
 
   /**
@@ -266,31 +284,40 @@ export default class DirectionGame {
 
     if (!databus.useItem('shufflePos')) return;
 
-    // 获取所有未消除方块的位置
+    // 播放道具使用音效
+    this.audioManager.playSFX('propUse');
+
+    // 获取所有未消除方块的“中心点位置”
+    // 关键：不能交换 top-left（不同方向/尺寸会导致对齐崩坏），交换中心点才能保持排列感
     const activeBlocks = databus.blocks.filter(b => !b.isRemoved);
-    const positions = activeBlocks.map(b => ({ x: b.x, y: b.y }));
+    const centers = activeBlocks.map(b => ({
+      cx: b.x + b.width / 2,
+      cy: b.y + b.height / 2
+    }));
 
     // Fisher-Yates 洗牌算法
-    for (let i = positions.length - 1; i > 0; i--) {
+    for (let i = centers.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [positions[i], positions[j]] = [positions[j], positions[i]];
+      [centers[i], centers[j]] = [centers[j], centers[i]];
     }
 
     // 应用新位置
     activeBlocks.forEach((block, index) => {
-      block.x = positions[index].x;
-      block.y = positions[index].y;
-      block.originalX = positions[index].x;
-      block.originalY = positions[index].y;
+      const cx = centers[index].cx;
+      const cy = centers[index].cy;
+      block.x = cx - block.width / 2;
+      block.y = cy - block.height / 2;
+      block.originalX = block.x;
+      block.originalY = block.y;
     });
 
     // 更新UI
     this.gameRenderer.updatePropCount('shufflePos', databus.items.shufflePos);
 
-    // 检查死局
-    this.checkDeadlock();
-
+    // 不立即检测死局，让玩家先操作
     console.log('[DirectionGame] 使用了洗牌道具（位置）');
+
+    this.modalRenderer.showToast('已重新排列方块');
   }
 
   /**
@@ -301,22 +328,31 @@ export default class DirectionGame {
 
     if (!databus.useItem('shuffleDir')) return;
 
-    const directions = [0, 1, 2, 3]; // UP, RIGHT, DOWN, LEFT
+    // 播放道具使用音效
+    this.audioManager.playSFX('propUse');
 
-    // 随机设置每个方块的方向
+    // 随机设置每个方块的方向（必须同步重算尺寸，且保持中心不变）
+    // 直接改 block.direction 会导致“头尾旋转但身体不变/变形”
+    const directions = [0, 1, 2, 3]; // UP, RIGHT, DOWN, LEFT
     databus.blocks.forEach(block => {
       if (!block.isRemoved) {
-        block.direction = directions[Math.floor(Math.random() * 4)];
+        const dir = directions[Math.floor(Math.random() * 4)];
+        if (typeof block.setDirection === 'function') {
+          block.setDirection(dir);
+        } else {
+          // 兜底：保持旧逻辑（理论不会走到）
+          block.direction = dir;
+        }
       }
     });
 
     // 更新UI
     this.gameRenderer.updatePropCount('shuffleDir', databus.items.shuffleDir);
 
-    // 检查死局
-    this.checkDeadlock();
-
+    // 不立即检测死局，让玩家先操作
     console.log('[DirectionGame] 使用了洗牌道具（方向）');
+
+    this.modalRenderer.showToast('已重新排列方向');
   }
 
   /**
@@ -348,8 +384,14 @@ export default class DirectionGame {
 
     // 检查是否可消除
     if (block.canRemove(databus.blocks)) {
+      // 播放点击成功音效
+      this.audioManager.playSFX('clickSuccess');
+
       block.remove();
       databus.removedBlocks++;
+
+      // 播放飞出音效
+      this.audioManager.playSFX('slideOut');
 
       // 检查胜利
       if (databus.removedBlocks >= databus.totalBlocks) {
@@ -360,6 +402,9 @@ export default class DirectionGame {
       // 检查死局
       this.checkDeadlock();
     } else {
+      // 播放点击失败音效
+      this.audioManager.playSFX('clickFail');
+
       // 不可消除，抖动反馈
       block.shake();
     }
@@ -391,11 +436,14 @@ export default class DirectionGame {
    * 弹窗触摸处理
    */
   handleModalTouch(x, y) {
-    const buttons = ['next', 'replay', 'useProp', 'retry'];
+    const buttons = ['next', 'replay', 'useProp', 'retry', 'confirm', 'cancel'];
 
     for (const name of buttons) {
       const button = this.modalRenderer.getButton(name);
       if (button && button.isClicked(x, y)) {
+        // 播放按钮点击音效
+        this.audioManager.playSFX('buttonClick');
+
         button.press();
         setTimeout(() => {
           button.release();
@@ -436,6 +484,18 @@ export default class DirectionGame {
         this.startLevel(databus.currentLevel);
         this.modalRenderer.hide();
         break;
+
+      case 'confirm':
+        // 确认弹窗 - 执行回调
+        const callback = this.modalRenderer.getConfirmCallback();
+        this.modalRenderer.hide();
+        if (callback) callback(true);
+        break;
+
+      case 'cancel':
+        // 取消弹窗
+        this.modalRenderer.hide();
+        break;
     }
   }
 
@@ -470,6 +530,9 @@ export default class DirectionGame {
 
     this.state = 'playing';
 
+    // 切换到游戏进行BGM
+    this.audioManager.playBGM('playing');
+
     console.log(`关卡 ${levelNumber} 开始，方块数量: ${databus.totalBlocks}`);
   }
 
@@ -491,6 +554,9 @@ export default class DirectionGame {
     this.state = 'victory';
     this.modalRenderer.showVictory();
 
+    // 播放胜利音效
+    this.audioManager.playBGM('victory');
+
     console.log('[DirectionGame] 关卡完成！');
   }
 
@@ -502,6 +568,9 @@ export default class DirectionGame {
     databus.isPlaying = false;
     this.state = 'defeat';
     this.modalRenderer.showDefeat();
+
+    // 播放失败音效
+    this.audioManager.playBGM('defeat');
 
     console.log('[DirectionGame] 死局！');
   }
@@ -545,8 +614,8 @@ export default class DirectionGame {
       // 绘制菜单界面
       this.menuRenderer.render(ctx);
     } else if (this.state === 'playing' || this.state === 'victory' || this.state === 'defeat') {
-      // 绘制游戏界面
-      this.gameRenderer.render(ctx, databus);
+      // 绘制游戏界面（传递道具模式状态）
+      this.gameRenderer.render(ctx, databus, this.propMode);
 
       // 绘制方块（包括正在滑出的方块）
       databus.blocks.forEach(block => {

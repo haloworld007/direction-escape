@@ -28,6 +28,9 @@ export default class PropButton {
     this.scale = 1;
     this.isPressed = false;
 
+    // 激活状态（用于抓取模式等）
+    this.isActive = false;
+
     // 是否需要观看广告（右上角视频图标）
     this.needsAd = true;
 
@@ -83,6 +86,11 @@ export default class PropButton {
     ctx.translate(this.x, this.y);
     ctx.scale(this.scale, this.scale);
     ctx.translate(-this.x, -this.y);
+
+    // 如果激活，绘制发光效果
+    if (this.isActive) {
+      this.drawActiveGlow(ctx);
+    }
 
     // 绘制按钮主体（圆角矩形）
     this.drawButtonBody(ctx);
@@ -147,6 +155,32 @@ export default class PropButton {
     ctx.lineWidth = 1.5;
     drawRoundRect(ctx, left + 2, top + 2, this.width - 4, this.height - 4, cornerRadius - 2);
     ctx.stroke();
+  }
+
+  /**
+   * 绘制激活状态的发光效果
+   */
+  drawActiveGlow(ctx) {
+    const left = this.x - this.width / 2;
+    const top = this.y - this.height / 2;
+    const glowSize = 8;
+    const cornerRadius = 14;
+
+    // 外发光（金色）
+    ctx.shadowColor = 'rgba(255, 215, 0, 0.8)';
+    ctx.shadowBlur = 20;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+
+    // 绘制发光边框
+    ctx.strokeStyle = 'rgba(255, 215, 0, 0.9)';
+    ctx.lineWidth = 4;
+    drawRoundRect(ctx, left - glowSize, top - glowSize, this.width + glowSize * 2, this.height + glowSize * 2, cornerRadius + glowSize);
+    ctx.stroke();
+
+    // 清除阴影
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
   }
 
   /**

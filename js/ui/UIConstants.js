@@ -111,8 +111,11 @@ export const FONT_SIZES = {
   PROGRESS: 32,         // 进度百分比（粗体）
   BUTTON: 16,           // 按钮文字
   HINT: 14,             // 提示文字
-  TITLE: 48,            // 主标题
-  SUBTITLE: 24          // 副标题
+  TITLE: 32,            // 主标题（从48改为32）
+  SUBTITLE: 20,         // 副标题（从24改为20）
+  MODAL_TITLE: 28,      // 弹窗标题专用
+  MODAL_SUBTITLE: 18,   // 弹窗副标题
+  MODAL_HINT: 16        // 弹窗提示文字
 };
 
 /**

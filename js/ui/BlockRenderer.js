@@ -28,17 +28,19 @@ export default class BlockRenderer {
 
     ctx.save();
 
-    // 如果有缩放效果，应用缩放
-    if (scale !== 1) {
-      const centerX = x + width / 2;
-      const centerY = y + height / 2;
-      ctx.translate(centerX, centerY);
-      ctx.scale(scale, scale);
-      ctx.translate(-centerX, -centerY);
-    }
+    // 以碰撞盒中心为原点，旋转绘制“胶囊本体45°”
+    const centerX = x + width / 2;
+    const centerY = y + height / 2;
+    const bodyW = block.bodyWidth || Math.max(width, height);
+    const bodyH = block.bodyHeight || Math.min(width, height);
+    const rotation = typeof block.rotation === 'number' ? block.rotation : 0;
 
-    // 绘制方块主体
-    this.drawAnimalBody(ctx, x, y, width, height, direction, type);
+    ctx.translate(centerX, centerY);
+    if (scale !== 1) ctx.scale(scale, scale);
+    ctx.rotate(rotation);
+
+    // 在局部坐标系中绘制（头部默认朝向 +X）
+    this.drawAnimalBody(ctx, -bodyW / 2, -bodyH / 2, bodyW, bodyH, direction, type);
 
     ctx.restore();
   }
@@ -100,20 +102,10 @@ export default class BlockRenderer {
   static drawAnimalFeatures(ctx, x, y, width, height, direction, animalType) {
     ctx.save();
 
-    // 计算中心点
+    // 已在 render() 里整体 rotate 过（对角线方向），这里不再按方向旋转
     const centerX = x + width / 2;
     const centerY = y + height / 2;
-
     ctx.translate(centerX, centerY);
-
-    // 旋转到头部方向
-    const rotations = {
-      [DIRECTIONS.RIGHT]: 0,
-      [DIRECTIONS.DOWN]: Math.PI / 2,
-      [DIRECTIONS.LEFT]: Math.PI,
-      [DIRECTIONS.UP]: -Math.PI / 2
-    };
-    ctx.rotate(rotations[direction] || 0);
 
     const bodyLength = Math.max(width, height);
     const bodyWidth = Math.min(width, height);

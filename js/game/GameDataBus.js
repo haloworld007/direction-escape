@@ -23,17 +23,21 @@ export default class GameDataBus {
   pool = new Pool();         // 对象池
 
   // 道具数量（PRD v1.3: 4种道具）
-  items = {
-    grab: 3,          // 抓走道具
-    flip: 2,          // 翻转道具
-    shufflePos: 1,    // 洗牌道具（位置）
-    shuffleDir: 1,    // 洗牌道具（方向）
-    shuffle: 1        // 兼容旧版本
-  };
+  // 注意：移到构造函数中初始化，避免类属性被意外修改
+  items = null;
 
   constructor() {
     if (instance) return instance;
     instance = this;
+
+    // 在构造函数中初始化道具默认值
+    this.items = {
+      grab: 3,          // 抓走道具
+      flip: 2,          // 翻转道具
+      shufflePos: 1,    // 洗牌道具（位置）
+      shuffleDir: 1,    // 洗牌道具（方向）
+      shuffle: 1        // 兼容旧版本
+    };
   }
 
   /**
@@ -94,9 +98,13 @@ export default class GameDataBus {
 
     try {
       wx.setStorageSync('gameProgress', data);
-      console.log('进度保存成功', data);
+      console.log('[GameDataBus] 进度保存成功', {
+        unlockedLevels: data.unlockedLevels,
+        currentLevel: data.currentLevel,
+        items: data.items
+      });
     } catch (e) {
-      console.error('保存失败', e);
+      console.error('[GameDataBus] 保存失败', e);
     }
   }
 
@@ -109,16 +117,29 @@ export default class GameDataBus {
       if (data) {
         this.unlockedLevels = data.unlockedLevels || 1;
         this.currentLevel = data.currentLevel || 1;
-        // 合并道具数据，使用最新值
+
+        // 合并道具数据，只保留大于0的值（避免用0覆盖默认值）
         if (data.items) {
-          this.items = { ...this.items, ...data.items };
+          for (const key in data.items) {
+            // 只合并有效的正值，确保不会用0或负数覆盖默认值
+            if (data.items[key] > 0 && this.items.hasOwnProperty(key)) {
+              this.items[key] = data.items[key];
+            }
+          }
         }
-        console.log('进度加载成功', data);
+
+        console.log('[GameDataBus] 进度加载成功', {
+          unlockedLevels: this.unlockedLevels,
+          currentLevel: this.currentLevel,
+          items: this.items
+        });
       } else {
-        console.log('无存档记录，使用默认值');
+        console.log('[GameDataBus] 无存档记录，使用默认值', {
+          items: this.items
+        });
       }
     } catch (e) {
-      console.error('加载失败', e);
+      console.error('[GameDataBus] 加载失败', e);
     }
   }
 
@@ -126,11 +147,19 @@ export default class GameDataBus {
    * 使用道具
    */
   useItem(itemType) {
+    if (!this.items[itemType]) {
+      console.warn(`[GameDataBus] 道具类型不存在: ${itemType}`);
+      return false;
+    }
+
     if (this.items[itemType] > 0) {
       this.items[itemType]--;
+      console.log(`[GameDataBus] 使用道具: ${itemType}, 剩余: ${this.items[itemType]}`);
       this.saveProgress();
       return true;
     }
+
+    console.warn(`[GameDataBus] 道具数量不足: ${itemType}, 当前: ${this.items[itemType]}`);
     return false;
   }
 

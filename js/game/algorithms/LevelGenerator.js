@@ -16,12 +16,43 @@ export default class LevelGenerator {
    */
   static getBlockDimensions(direction, shortSide) {
     const longSide = shortSide * (BLOCK_SIZES.LENGTH / BLOCK_SIZES.WIDTH);
-    const isVertical = direction === DIRECTIONS.UP || direction === DIRECTIONS.DOWN;
+    // 方块本体固定为“水平胶囊”，再根据 direction 旋转（45°对角方向）
+    const bodyW = longSide;
+    const bodyH = shortSide;
+
+    const angle = this.getDirectionAngle(direction);
+    const c = Math.abs(Math.cos(angle));
+    const s = Math.abs(Math.sin(angle));
+    const bboxW = c * bodyW + s * bodyH;
+    const bboxH = s * bodyW + c * bodyH;
+
     return {
       longSide,
-      width: isVertical ? shortSide : longSide,
-      height: isVertical ? longSide : shortSide
+      bodyW,
+      bodyH,
+      angle,
+      // 用旋转后的 AABB 做布局/碰撞
+      width: bboxW,
+      height: bboxH
     };
+  }
+
+  /**
+   * 对角线方向对应的旋转角（与 Block.js 保持一致）
+   */
+  static getDirectionAngle(direction) {
+    switch (direction) {
+      case DIRECTIONS.UP:    // 右上（NE）
+        return -Math.PI / 4;
+      case DIRECTIONS.RIGHT: // 右下（SE）
+        return Math.PI / 4;
+      case DIRECTIONS.DOWN:  // 左下（SW）
+        return (3 * Math.PI) / 4;
+      case DIRECTIONS.LEFT:  // 左上（NW）
+        return (-3 * Math.PI) / 4;
+      default:
+        return -Math.PI / 4;
+    }
   }
 
   /**
@@ -33,9 +64,9 @@ export default class LevelGenerator {
 
     console.log(`[LevelGenerator] 生成关卡 ${levelNumber}, 目标方块数: ${params.blockCount}`);
 
-    // 尝试生成菱形布局
+    // 尝试生成“真正45度旋转 + 有空隙”的布局（用户反馈要求）
     for (let attempt = 0; attempt < 5; attempt++) {
-      const blocks = this.generateDiamondLayout(params, screenWidth, screenHeight, boardRect);
+      const blocks = this.generateDiagonalSparseLayout(params, levelNumber, screenWidth, screenHeight, boardRect);
 
       // 验证关卡可解性
       if (this.validateLevel(blocks, screenWidth, screenHeight)) {
@@ -50,19 +81,28 @@ export default class LevelGenerator {
   }
 
   /**
-   * 生成菱形密排布局（PRD v1.3: 45度紧密排列）
+   * 生成真正45度旋转的稀疏菱形布局
+   * PRD 4.1 要求的是“错位网格布局（菱形密排）/蜂巢/砌砖结构”：
+   * - 通过“每行水平偏移半格”形成整体45°倾斜观感
+   * - 所有方块严格落在离散格位（空隙=空出一个完整格位）
    */
-  static generateDiamondLayout(params, screenWidth, screenHeight, boardRect) {
+  static generateDiagonalSparseLayout(params, levelNumber, screenWidth, screenHeight, boardRect) {
     const blocks = [];
-    const { blockCount, blockSize } = params;
+    const { blockCount, blockSize, skipRate } = params;
 
-    // 方块尺寸（使用更小的尺寸避免溢出）
-    const shortSide = blockSize || 20;  // 更小的方块以容纳更多
-    const { longSide } = this.getBlockDimensions(DIRECTIONS.RIGHT, shortSide);
+    // 方块尺寸：优先使用 BLOCK_SIZES.WIDTH 的体系（保证渲染比例一致），难度可略调
+    const shortSide = blockSize || BLOCK_SIZES.WIDTH;
+    const dimsSample = this.getBlockDimensions(DIRECTIONS.UP, shortSide);
+    const longSide = dimsSample.longSide;
+    const bboxW = dimsSample.width;
+    const bboxH = dimsSample.height;
 
-    // 计算网格参数 - 紧密排列，但保持足够间距
-    const stepX = longSide * 0.9 + BLOCK_SIZES.SPACING;   // 水平步长
-    const stepY = shortSide * 1.15 + BLOCK_SIZES.SPACING; // 垂直步长
+    // 格位尺寸：一个“动物占用空间”的距离
+    // - 横向以 longSide 为主，纵向以 shortSide 为主
+    // - 空一格=两只动物中心间距增加一个 slot（用户反馈要求）
+    // 用“旋转后碰撞盒”作为占位尺寸，保证密排不重叠
+    const slotX = bboxW + BLOCK_SIZES.SPACING + 4;
+    const slotY = bboxH + BLOCK_SIZES.SPACING + 4;
 
     // 安全边界（确保方块不会溢出棋盘）
     const safeMargin = BLOCK_SIZES.SAFETY_MARGIN + longSide / 2;
@@ -73,32 +113,33 @@ export default class LevelGenerator {
       height: boardRect.height - safeMargin * 2
     };
 
-    // 计算可容纳的行列数
-    const maxCols = Math.floor(safeBoardRect.width / stepX);
-    const maxRows = Math.floor(safeBoardRect.height / stepY);
-
-    // 根据方块数量计算需要的菱形大小
-    const targetArea = Math.sqrt(blockCount * 1.5);
-    const diamondSize = Math.min(Math.ceil(targetArea), Math.min(maxCols, maxRows));
-
-    // 菱形中心
+    // 布局中心
     const centerX = safeBoardRect.x + safeBoardRect.width / 2;
     const centerY = safeBoardRect.y + safeBoardRect.height / 2;
 
-    // 生成菱形格点
-    const candidates = [];
-    const halfSize = Math.floor(diamondSize / 2);
+    // 关卡种子随机：保证“同一关卡”布局稳定，避免每次进来都乱
+    const rand = this.createSeededRandom(levelNumber);
 
-    for (let row = -halfSize; row <= halfSize; row++) {
-      const rowWidth = diamondSize - Math.abs(row);
+    // 生成候选格位（菱形团块），每行偏移半格形成45°倾斜观感
+    const candidates = [];
+    const gapRate = typeof skipRate === 'number' ? skipRate : 0.28; // “空隙占比”
+    const neededSlots = Math.ceil(blockCount / Math.max(0.25, (1 - gapRate)));
+    const R = this.solveDiamondRadius(neededSlots);
+
+    for (let row = -R; row <= R; row++) {
+      // 这一行最多能放的列数（菱形）
+      const rowWidth = (2 * R + 1) - Math.abs(row);
       const startCol = -Math.floor(rowWidth / 2);
 
-      for (let col = 0; col < rowWidth; col++) {
-        const gridCol = startCol + col;
-        
-        // 45度倾斜排列
-        const x = centerX + gridCol * stepX + (row % 2) * (stepX * 0.5);
-        const y = centerY + row * stepY;
+      for (let i = 0; i < rowWidth; i++) {
+        const col = startCol + i;
+
+        // 错位：每行偏移半格（形成“倾斜/蜂巢/砌砖”观感）
+        const offsetX = (row & 1) ? (slotX * 0.5) : 0;
+
+        // 以格位中心点定位
+        const x = centerX + col * slotX + offsetX;
+        const y = centerY + row * slotY;
 
         // 边界检查 - 确保方块不会超出安全区域
         if (x - longSide / 2 < safeBoardRect.x ||
@@ -108,19 +149,25 @@ export default class LevelGenerator {
           continue; // 跳过超出边界的位置
         }
 
-        // 距离中心的曼哈顿距离（用于排序）
-        const dist = Math.abs(gridCol) + Math.abs(row);
+        // 距离中心（用于方向分配/可解性修正）
+        const dist = Math.abs(col) + Math.abs(row);
 
-        candidates.push({ x, y, row, col: gridCol, dist });
+        candidates.push({ x, y, row, col, dist });
       }
     }
 
-    // 按距离排序，从外到内
-    candidates.sort((a, b) => b.dist - a.dist || Math.random() - 0.5);
+    // 如果候选不足，直接回退（让外层重试/后备布局）
+    if (candidates.length < blockCount) return blocks;
 
-    // 选取需要的数量（不超过候选数量）
-    const actualCount = Math.min(blockCount, candidates.length);
-    const selected = candidates.slice(0, actualCount);
+    // 随机选择 blockCount 个格点（剩下的自然就是空隙），但格点本身依然严格对齐
+    this.shuffleArray(candidates, rand);
+
+    const selected = candidates.slice(0, blockCount);
+    // 再按距离排序（外到内），用于更合理的方向分配
+    selected.sort((a, b) => b.dist - a.dist);
+
+    // 用于方向分配的半径（与 dist 同量纲）
+    const halfSize = R;
 
     // 生成方块
     selected.forEach((pos, index) => {
@@ -151,6 +198,39 @@ export default class LevelGenerator {
     this.ensureRemovableBlocks(blocks, screenWidth, screenHeight, centerX, centerY, shortSide);
 
     return blocks;
+  }
+
+  /**
+   * 计算菱形网格半径 R，使得 |r|+|c|<=R 的格点数量 >= needed
+   * 格点数公式：1 + 2R(R+1)
+   */
+  static solveDiamondRadius(needed) {
+    let R = 0;
+    while (1 + 2 * R * (R + 1) < needed) R++;
+    return R;
+  }
+
+  /**
+   * 生成可复现随机数（mulberry32）
+   */
+  static createSeededRandom(seed) {
+    let t = (seed >>> 0) + 0x6D2B79F5;
+    return function() {
+      t += 0x6D2B79F5;
+      let x = Math.imul(t ^ (t >>> 15), 1 | t);
+      x ^= x + Math.imul(x ^ (x >>> 7), 61 | x);
+      return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /**
+   * 洗牌（支持注入随机函数，保证可复现）
+   */
+  static shuffleArray(arr, rand = Math.random) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
   }
 
   /**
@@ -361,11 +441,12 @@ export default class LevelGenerator {
         const a = blocks[i];
         const b = blocks[j];
 
-        // AABB碰撞检测
-        if (a.x < b.x + b.width &&
-            a.x + a.width > b.x &&
-            a.y < b.y + b.height &&
-            a.y + a.height > b.y) {
+        // AABB碰撞检测（允许轻微接触，避免误判导致反复重试）
+        const margin = 2;
+        if (a.x + margin < b.x + b.width - margin &&
+            a.x + a.width - margin > b.x + margin &&
+            a.y + margin < b.y + b.height - margin &&
+            a.y + a.height - margin > b.y + margin) {
           return true;
         }
       }
@@ -377,34 +458,38 @@ export default class LevelGenerator {
    * 获取难度参数（优化版：使用更小的方块避免溢出）
    */
   static getDifficultyParams(level) {
-    // 基础方块尺寸（更小以避免溢出）
-    const SMALL_BLOCK = 18;   // 最小
-    const MEDIUM_BLOCK = 20;  // 中等
-    const LARGE_BLOCK = 22;   // 较大（新手关）
+    // 基础方块尺寸（与渲染体系一致）
+    const SMALL_BLOCK = BLOCK_SIZES.WIDTH;       // 24
+    const MEDIUM_BLOCK = BLOCK_SIZES.WIDTH + 2;  // 26
+    const LARGE_BLOCK = BLOCK_SIZES.WIDTH + 4;   // 28
 
     if (level <= 3) {
       // 教学关：较少方块，让玩家熟悉
       return {
-        blockCount: 25 + level * 8,  // 33-49个
-        blockSize: LARGE_BLOCK
+        blockCount: 20 + level * 6,  // 26-38
+        blockSize: LARGE_BLOCK,
+        skipRate: 0.34               // 更稀疏（空一格更多）
       };
     } else if (level <= 10) {
       // 简单关：中等数量
       return {
-        blockCount: 45 + (level - 3) * 6,  // 51-87个
-        blockSize: MEDIUM_BLOCK
+        blockCount: 36 + (level - 3) * 5,  // 41-71
+        blockSize: MEDIUM_BLOCK,
+        skipRate: 0.28
       };
     } else if (level <= 20) {
       // 中等关：较多方块
       return {
-        blockCount: 80 + (level - 10) * 4,  // 84-120个
-        blockSize: SMALL_BLOCK
+        blockCount: 60 + (level - 10) * 4,  // 64-100
+        blockSize: SMALL_BLOCK,
+        skipRate: 0.22
       };
     } else {
       // 困难关：大量方块
       return {
-        blockCount: Math.min(140, 120 + (level - 20) * 2),
-        blockSize: SMALL_BLOCK
+        blockCount: Math.min(120, 90 + (level - 20) * 2),
+        blockSize: SMALL_BLOCK,
+        skipRate: 0.18
       };
     }
   }

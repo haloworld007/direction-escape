@@ -14,19 +14,17 @@ export default class DirectionDetector {
    * @returns {boolean} true=被阻挡，false=可消除
    */
   static isBlocked(block, allBlocks, screenWidth, screenHeight) {
-    // 1. 定义方向向量
+    // 1) 对角线方向向量（单位向量）
+    const inv = 1 / Math.sqrt(2);
     const directionVectors = {
-      [DIRECTIONS.UP]: { x: 0, y: -1 },
-      [DIRECTIONS.RIGHT]: { x: 1, y: 0 },
-      [DIRECTIONS.DOWN]: { x: 0, y: 1 },
-      [DIRECTIONS.LEFT]: { x: -1, y: 0 }
+      [DIRECTIONS.UP]: { x: inv, y: -inv },     // 右上
+      [DIRECTIONS.RIGHT]: { x: inv, y: inv },  // 右下
+      [DIRECTIONS.DOWN]: { x: -inv, y: inv },  // 左下
+      [DIRECTIONS.LEFT]: { x: -inv, y: -inv }  // 左上
     };
 
     const vector = directionVectors[block.direction];
-    if (!vector) {
-      console.error('未知方向:', block.direction);
-      return true; // 未知方向，视为被阻挡
-    }
+    if (!vector) return true;
 
     console.log(`[DirectionDetector] 开始检测: block=(${block.x}, ${block.y}), direction=${block.direction}, size=${block.width}x${block.height}`);
 
@@ -34,28 +32,15 @@ export default class DirectionDetector {
     const centerX = block.x + block.width / 2;
     const centerY = block.y + block.height / 2;
 
-    // 3. 沿方向向量向外移动，移出当前方块
-    let startX, startY;
-    const offset = Math.max(block.width, block.height) / 2 + 1; // 移出方块范围
-
-    if (block.direction === DIRECTIONS.UP) {
-      startX = centerX;
-      startY = block.y - offset;
-    } else if (block.direction === DIRECTIONS.DOWN) {
-      startX = centerX;
-      startY = block.y + block.height + offset;
-    } else if (block.direction === DIRECTIONS.LEFT) {
-      startX = block.x - offset;
-      startY = centerY;
-    } else if (block.direction === DIRECTIONS.RIGHT) {
-      startX = block.x + block.width + offset;
-      startY = centerY;
-    }
+    // 3) 沿方向向量向外移动，移出当前方块 AABB
+    const offset = Math.max(block.width, block.height) / 2 + 2;
+    const startX = centerX + vector.x * offset;
+    const startY = centerY + vector.y * offset;
 
     console.log(`[DirectionDetector] 起始点: (${startX}, ${startY}), 屏幕尺寸: ${screenWidth}x${screenHeight}`);
 
     // 3. 定义检测步长（使用较小值确保不会跳过方块）
-    const stepSize = 10; // 使用固定小步长而不是方块宽度
+    const stepSize = 8; // 对角线射线更密一些
 
     // 4. 沿射线逐步检测
     let currentX = startX;
@@ -84,8 +69,8 @@ export default class DirectionDetector {
         if (other.isRemoved) continue; // 跳过已消除的方块
         if (!other.visible) continue; // 跳过不可见的方块
 
-        // 使用方向性碰撞检测
-        if (this.checkCollision(block.direction, currentX, currentY, other)) {
+        // 对角线：射线点只要进入其他方块 AABB 即视为阻挡
+        if (this.pointInRect(currentX, currentY, other)) {
           console.log(`[DirectionDetector] 检测到碰撞! 检测点(${currentX}, ${currentY}), 其他方块: (${other.x}, ${other.y})`);
           return true; // 被阻挡
         }
@@ -133,40 +118,25 @@ export default class DirectionDetector {
       return false;
     }
 
-    // 如果点在矩形内，还需要检查是否真的在射线的"前方"
-    switch (direction) {
-      case DIRECTIONS.UP:
-        // 朝上：检测点必须在目标方块的下边缘之上
-        return checkY <= targetBlock.y + targetBlock.height / 2;
-      case DIRECTIONS.DOWN:
-        // 朝下：检测点必须在目标方块的上边缘之下
-        return checkY >= targetBlock.y + targetBlock.height / 2;
-      case DIRECTIONS.LEFT:
-        // 朝左：检测点必须在目标方块的右边缘之左
-        return checkX <= targetBlock.x + targetBlock.width / 2;
-      case DIRECTIONS.RIGHT:
-        // 朝右：检测点必须在目标方块的左边缘之右
-        return checkX >= targetBlock.x + targetBlock.width / 2;
-      default:
-        return true;
-    }
+    return true;
   }
 
   /**
    * 获取射线路径点数组（用于调试/可视化）
    */
   static getRayPath(block, screenWidth, screenHeight) {
+    const inv = 1 / Math.sqrt(2);
     const directionVectors = {
-      [DIRECTIONS.UP]: { x: 0, y: -1 },
-      [DIRECTIONS.RIGHT]: { x: 1, y: 0 },
-      [DIRECTIONS.DOWN]: { x: 0, y: 1 },
-      [DIRECTIONS.LEFT]: { x: -1, y: 0 }
+      [DIRECTIONS.UP]: { x: inv, y: -inv },
+      [DIRECTIONS.RIGHT]: { x: inv, y: inv },
+      [DIRECTIONS.DOWN]: { x: -inv, y: inv },
+      [DIRECTIONS.LEFT]: { x: -inv, y: -inv }
     };
 
     const vector = directionVectors[block.direction];
     const startX = block.x + block.width / 2;
     const startY = block.y + block.height / 2;
-    const stepSize = block.width;
+    const stepSize = 12;
 
     const path = [{ x: startX, y: startY }];
     let currentX = startX;

@@ -1,8 +1,8 @@
 /**
- * 弹窗渲染器
- * 根据 PRD.md 第十六、十八章节设计
+ * 弹窗渲染器（简洁版）
  * - 胜利弹窗
  * - 失败弹窗（死局）
+ * - Toast 提示（自动消失）
  * - 道具确认弹窗
  */
 
@@ -15,7 +15,192 @@ export default class ModalRenderer {
     this.buttons = {};
     this.animationProgress = 0;
     this.isAnimating = false;
+
+    // Toast 相关
+    this.toastMessage = '';
+    this.toastStartTime = 0;
+    this.toastDuration = 1500; // 默认1.5秒
+    this.showingToast = false;
+
+    // 确认弹窗相关
+    this.confirmData = null;
+    this.confirmCallback = null;
   }
+
+  // ==================== Toast 提示 ====================
+
+  /**
+   * 显示 Toast 提示（简洁版，自动消失）
+   * @param {string} message - 提示文字
+   * @param {number} duration - 持续时间（毫秒）
+   */
+  showToast(message, duration = 1500) {
+    this.toastMessage = message;
+    this.toastDuration = duration;
+    this.toastStartTime = Date.now();
+    this.showingToast = true;
+  }
+
+  /**
+   * 隐藏 Toast
+   */
+  hideToast() {
+    this.showingToast = false;
+    this.toastMessage = '';
+  }
+
+  /**
+   * 渲染 Toast（简洁卡片风格）
+   */
+  renderToast(ctx) {
+    if (!this.showingToast) return;
+
+    // 检查是否超时
+    const elapsed = Date.now() - this.toastStartTime;
+    if (elapsed >= this.toastDuration) {
+      this.hideToast();
+      return;
+    }
+
+    const screenWidth = canvas.width;
+    const screenHeight = canvas.height;
+
+    // 计算淡入淡出
+    let alpha = 1;
+    if (elapsed < 150) {
+      alpha = elapsed / 150; // 淡入
+    } else if (elapsed > this.toastDuration - 300) {
+      alpha = (this.toastDuration - elapsed) / 300; // 淡出
+    }
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    // Toast 尺寸
+    ctx.font = `${FONT_SIZES.BUTTON}px Arial`;
+    const textWidth = ctx.measureText(this.toastMessage).width;
+    const toastWidth = Math.min(screenWidth * 0.8, textWidth + 40);
+    const toastHeight = 44;
+    const toastX = (screenWidth - toastWidth) / 2;
+    const toastY = screenHeight * 0.4;
+
+    // 背景（深色半透明）
+    ctx.fillStyle = 'rgba(50, 50, 50, 0.9)';
+    drawRoundRect(ctx, toastX, toastY, toastWidth, toastHeight, 22);
+    ctx.fill();
+
+    // 文字
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = `${FONT_SIZES.BUTTON}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(this.toastMessage, screenWidth / 2, toastY + toastHeight / 2);
+
+    ctx.restore();
+  }
+
+  // ==================== 确认弹窗 ====================
+
+  /**
+   * 显示确认弹窗（简洁版）
+   * @param {Object} data - { title, message, confirmText, cancelText }
+   * @param {Function} callback - 确认后的回调
+   */
+  showConfirm(data, callback) {
+    this.currentModal = 'confirm';
+    this.confirmData = {
+      title: data.title || '提示',
+      message: data.message || '',
+      confirmText: data.confirmText || '确定',
+      cancelText: data.cancelText || '取消'
+    };
+    this.confirmCallback = callback;
+    this.initConfirmButtons();
+    this.startAnimation();
+  }
+
+  /**
+   * 初始化确认弹窗按钮
+   */
+  initConfirmButtons() {
+    const screenWidth = canvas.width;
+    const screenHeight = canvas.height;
+    const centerX = screenWidth / 2;
+    const modalY = screenHeight * 0.35;
+    const buttonY = modalY + 120;
+    const buttonGap = 15;
+    const buttonWidth = 100;
+
+    // 取消按钮
+    this.buttons.cancel = new Button(
+      this.confirmData.cancelText,
+      centerX - buttonWidth - buttonGap / 2,
+      buttonY,
+      {
+        width: buttonWidth,
+        height: 44,
+        backgroundColor: '#9E9E9E',
+        fontSize: 15
+      }
+    );
+
+    // 确认按钮
+    this.buttons.confirm = new Button(
+      this.confirmData.confirmText,
+      centerX + buttonGap / 2,
+      buttonY,
+      {
+        width: buttonWidth,
+        height: 44,
+        backgroundColor: '#4CAF50',
+        fontSize: 15
+      }
+    );
+  }
+
+  /**
+   * 绘制确认弹窗（简洁版）
+   */
+  drawConfirmModal(ctx, scale) {
+    const screenWidth = canvas.width;
+    const screenHeight = canvas.height;
+    const centerX = screenWidth / 2;
+    const modalY = screenHeight * 0.35;
+    const modalWidth = screenWidth * 0.75;
+    const modalHeight = 180;
+
+    ctx.save();
+
+    // 缩放动画
+    ctx.translate(centerX, modalY + modalHeight / 2);
+    ctx.scale(scale, scale);
+    ctx.translate(-centerX, -(modalY + modalHeight / 2));
+
+    // 白色圆角卡片
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
+    ctx.shadowBlur = 15;
+    ctx.shadowOffsetY = 5;
+    ctx.fillStyle = 'white';
+    drawRoundRect(ctx, centerX - modalWidth / 2, modalY, modalWidth, modalHeight, 16);
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+
+    // 标题
+    ctx.fillStyle = COLORS.TEXT_PRIMARY;
+    ctx.font = `bold 18px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(this.confirmData.title, centerX, modalY + 25);
+
+    // 内容
+    ctx.fillStyle = COLORS.TEXT_SECONDARY;
+    ctx.font = `15px Arial`;
+    ctx.fillText(this.confirmData.message, centerX, modalY + 60);
+
+    ctx.restore();
+  }
+
+  // ==================== 胜利/失败弹窗 ====================
 
   /**
    * 显示胜利弹窗
@@ -42,6 +227,8 @@ export default class ModalRenderer {
     this.currentModal = null;
     this.buttons = {};
     this.animationProgress = 0;
+    this.confirmData = null;
+    this.confirmCallback = null;
   }
 
   /**
@@ -60,9 +247,9 @@ export default class ModalRenderer {
     const screenHeight = canvas.height;
     const centerX = screenWidth / 2;
     const modalY = screenHeight * 0.35;
-    const buttonY = modalY + 180;
+    const buttonY = modalY + 140;
 
-    // 下一关按钮（主按钮）
+    // 下一关按钮
     this.buttons.next = new Button(
       '下一关',
       centerX - BUTTON_SIZES.PRIMARY.WIDTH / 2,
@@ -70,16 +257,16 @@ export default class ModalRenderer {
       {
         width: BUTTON_SIZES.PRIMARY.WIDTH,
         height: BUTTON_SIZES.PRIMARY.HEIGHT,
-        backgroundColor: COLORS.PRIMARY_BUTTON,
+        backgroundColor: '#4CAF50',
         fontSize: FONT_SIZES.BUTTON
       }
     );
 
-    // 重玩按钮（次按钮，较小）
+    // 重玩按钮
     this.buttons.replay = new Button(
       '重玩',
       centerX - BUTTON_SIZES.SECONDARY.WIDTH / 2,
-      buttonY + BUTTON_SIZES.PRIMARY.HEIGHT + 15,
+      buttonY + BUTTON_SIZES.PRIMARY.HEIGHT + 12,
       {
         width: BUTTON_SIZES.SECONDARY.WIDTH,
         height: BUTTON_SIZES.SECONDARY.HEIGHT,
@@ -97,7 +284,7 @@ export default class ModalRenderer {
     const screenHeight = canvas.height;
     const centerX = screenWidth / 2;
     const modalY = screenHeight * 0.35;
-    const buttonY = modalY + 180;
+    const buttonY = modalY + 130;
 
     // 使用道具按钮
     this.buttons.useProp = new Button(
@@ -107,16 +294,16 @@ export default class ModalRenderer {
       {
         width: BUTTON_SIZES.PRIMARY.WIDTH,
         height: BUTTON_SIZES.PRIMARY.HEIGHT,
-        backgroundColor: '#4FC3F7',
+        backgroundColor: '#2196F3',
         fontSize: FONT_SIZES.BUTTON
       }
     );
 
-    // 重试按钮（次按钮）
+    // 重试按钮
     this.buttons.retry = new Button(
       '重试',
       centerX - BUTTON_SIZES.SECONDARY.WIDTH / 2,
-      buttonY + BUTTON_SIZES.PRIMARY.HEIGHT + 15,
+      buttonY + BUTTON_SIZES.PRIMARY.HEIGHT + 12,
       {
         width: BUTTON_SIZES.SECONDARY.WIDTH,
         height: BUTTON_SIZES.SECONDARY.HEIGHT,
@@ -131,7 +318,7 @@ export default class ModalRenderer {
    */
   update() {
     if (this.isAnimating) {
-      this.animationProgress += 0.05;
+      this.animationProgress += 0.08;
       if (this.animationProgress >= 1) {
         this.animationProgress = 1;
         this.isAnimating = false;
@@ -143,22 +330,28 @@ export default class ModalRenderer {
    * 渲染弹窗
    */
   render(ctx, databus) {
+    // 先渲染 Toast（不阻挡其他操作）
+    this.renderToast(ctx);
+
     if (!this.currentModal) return;
 
     // 更新动画
     this.update();
 
-    // 绘制半透明背景遮罩
-    this.drawBackdrop(ctx);
+    // 半透明遮罩
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // 计算动画缩放
+    // 缩放动画
     const scale = this.easeOutBack(this.animationProgress);
 
-    // 根据类型绘制弹窗
+    // 根据类型绘制
     if (this.currentModal === 'victory') {
       this.drawVictoryModal(ctx, databus, scale);
     } else if (this.currentModal === 'defeat') {
       this.drawDefeatModal(ctx, databus, scale);
+    } else if (this.currentModal === 'confirm') {
+      this.drawConfirmModal(ctx, scale);
     }
 
     // 绘制按钮
@@ -168,232 +361,124 @@ export default class ModalRenderer {
   }
 
   /**
-   * 绘制背景遮罩
-   */
-  drawBackdrop(ctx) {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
-
-  /**
-   * 绘制胜利弹窗
+   * 绘制胜利弹窗（简洁版）
    */
   drawVictoryModal(ctx, databus, scale) {
     const screenWidth = canvas.width;
     const screenHeight = canvas.height;
     const centerX = screenWidth / 2;
     const modalY = screenHeight * 0.35;
-    const modalWidth = screenWidth * 0.8;
-    const modalHeight = 300;
+    const modalWidth = screenWidth * 0.75;
+    const modalHeight = 240;
 
     ctx.save();
 
-    // 应用缩放动画
     ctx.translate(centerX, modalY + modalHeight / 2);
     ctx.scale(scale, scale);
     ctx.translate(-centerX, -(modalY + modalHeight / 2));
 
-    // 弹窗背景（白色圆角卡片）
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-    ctx.shadowBlur = 20;
-    ctx.shadowOffsetY = 10;
-
+    // 白色卡片
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
+    ctx.shadowBlur = 15;
+    ctx.shadowOffsetY = 5;
     ctx.fillStyle = 'white';
-    drawRoundRect(
-      ctx,
-      centerX - modalWidth / 2,
-      modalY,
-      modalWidth,
-      modalHeight,
-      20
-    );
+    drawRoundRect(ctx, centerX - modalWidth / 2, modalY, modalWidth, modalHeight, 16);
     ctx.fill();
-
     ctx.shadowColor = 'transparent';
 
     // 标题
-    ctx.fillStyle = COLORS.TEXT_PRIMARY;
-    ctx.font = `bold ${FONT_SIZES.TITLE}px Arial`;
+    ctx.fillStyle = '#4CAF50';
+    ctx.font = `bold 24px Arial`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.fillText('关卡完成！', centerX, modalY + 30);
 
-    // 庆祝动画（简单粒子效果）
-    this.drawCelebration(ctx, centerX, modalY + 100);
-
     // 进度信息
-    const progress = databus.getProgress();
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.font = `${FONT_SIZES.SUBTITLE}px Arial`;
-    ctx.textBaseline = 'top';
-    ctx.fillText(`已消除 ${databus.removedBlocks} / ${databus.totalBlocks} 个方块`, centerX, modalY + 150);
+    ctx.font = `16px Arial`;
+    ctx.fillText(`已消除 ${databus.removedBlocks} / ${databus.totalBlocks} 个方块`, centerX, modalY + 75);
 
-    // 星级评价（可选）
-    this.drawStars(ctx, centerX, modalY + 200, 3);
+    // 简洁星星
+    this.drawSimpleStars(ctx, centerX, modalY + 110, 3);
 
     ctx.restore();
   }
 
   /**
-   * 绘制失败弹窗
+   * 绘制失败弹窗（简洁版）
    */
   drawDefeatModal(ctx, databus, scale) {
     const screenWidth = canvas.width;
     const screenHeight = canvas.height;
     const centerX = screenWidth / 2;
     const modalY = screenHeight * 0.35;
-    const modalWidth = screenWidth * 0.8;
-    const modalHeight = 300;
+    const modalWidth = screenWidth * 0.75;
+    const modalHeight = 220;
 
     ctx.save();
 
-    // 应用缩放动画
     ctx.translate(centerX, modalY + modalHeight / 2);
     ctx.scale(scale, scale);
     ctx.translate(-centerX, -(modalY + modalHeight / 2));
 
-    // 弹窗背景
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-    ctx.shadowBlur = 20;
-    ctx.shadowOffsetY = 10;
-
+    // 白色卡片
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
+    ctx.shadowBlur = 15;
+    ctx.shadowOffsetY = 5;
     ctx.fillStyle = 'white';
-    drawRoundRect(
-      ctx,
-      centerX - modalWidth / 2,
-      modalY,
-      modalWidth,
-      modalHeight,
-      20
-    );
+    drawRoundRect(ctx, centerX - modalWidth / 2, modalY, modalWidth, modalHeight, 16);
     ctx.fill();
-
     ctx.shadowColor = 'transparent';
 
-    // 标题（避免使用"失败"字样）
-    ctx.fillStyle = COLORS.TEXT_PRIMARY;
-    ctx.font = `bold ${FONT_SIZES.TITLE}px Arial`;
+    // 标题
+    ctx.fillStyle = '#FF9800';
+    ctx.font = `bold 20px Arial`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillText('没有可消除的方块啦', centerX, modalY + 30);
+    ctx.fillText('没有可消除的方块了', centerX, modalY + 30);
 
-    // 困惑的动物表情
-    this.drawConfusedFace(ctx, centerX, modalY + 100);
-
-    // 提示文字
+    // 提示
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.font = `${FONT_SIZES.HINT}px Arial`;
-    ctx.textBaseline = 'top';
-    ctx.fillText('使用道具可以帮助你解围哦', centerX, modalY + 160);
+    ctx.font = `15px Arial`;
+    ctx.fillText('使用道具可以帮助你解围', centerX, modalY + 70);
 
-    // 道具数量提示
-    const totalProps = databus.items.grab + databus.items.flip + databus.items.shuffle;
-    ctx.fillText(`剩余道具: ${totalProps} 个`, centerX, modalY + 190);
+    // 道具数量
+    const totalProps = (databus.items.grab || 0) + (databus.items.flip || 0) + 
+                       (databus.items.shufflePos || 0) + (databus.items.shuffleDir || 0);
+    ctx.fillText(`剩余道具: ${totalProps} 个`, centerX, modalY + 95);
 
     ctx.restore();
   }
 
   /**
-   * 绘制庆祝动画
+   * 绘制简洁星星
    */
-  drawCelebration(ctx, x, y) {
-    // 简单的彩带效果
-    const colors = ['#FF5252', '#FFEB3B', '#4CAF50', '#2196F3', '#9C27B0'];
-    const time = Date.now() / 1000;
+  drawSimpleStars(ctx, x, y, count) {
+    const size = 18;
+    const spacing = 28;
+    const startX = x - ((count - 1) * spacing) / 2;
 
-    for (let i = 0; i < 8; i++) {
-      const angle = (Math.PI * 2 / 8) * i + time;
-      const radius = 30 + Math.sin(time * 3 + i) * 5;
-      const px = x + Math.cos(angle) * radius;
-      const py = y + Math.sin(angle) * radius;
-
-      ctx.fillStyle = colors[i % colors.length];
+    ctx.fillStyle = '#FFC107';
+    for (let i = 0; i < count; i++) {
+      const cx = startX + i * spacing;
+      // 简单的五角星
       ctx.beginPath();
-      ctx.arc(px, py, 5, 0, Math.PI * 2);
+      for (let j = 0; j < 5; j++) {
+        const angle = (Math.PI * 2 * j) / 5 - Math.PI / 2;
+        const px = cx + Math.cos(angle) * size;
+        const py = y + Math.sin(angle) * size;
+        if (j === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+        const innerAngle = angle + Math.PI / 5;
+        ctx.lineTo(cx + Math.cos(innerAngle) * (size * 0.4), y + Math.sin(innerAngle) * (size * 0.4));
+      }
+      ctx.closePath();
       ctx.fill();
     }
   }
 
   /**
-   * 绘制困惑表情
-   */
-  drawConfusedFace(ctx, x, y) {
-    const size = 60;
-
-    // 脸部
-    ctx.fillStyle = '#FFCC80';
-    ctx.beginPath();
-    ctx.arc(x, y, size, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 眼睛（困惑眼神）
-    ctx.fillStyle = '#333';
-    ctx.beginPath();
-    ctx.arc(x - 20, y - 10, 8, 0, Math.PI * 2);
-    ctx.arc(x + 20, y - 10, 8, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 眼珠（看向两边）
-    ctx.fillStyle = 'white';
-    ctx.beginPath();
-    ctx.arc(x - 22, y - 10, 3, 0, Math.PI * 2);
-    ctx.arc(x + 22, y - 10, 3, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 疑问号
-    ctx.fillStyle = '#333';
-    ctx.font = 'bold 30px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('?', x, y + 25);
-  }
-
-  /**
-   * 绘制星星
-   */
-  drawStars(ctx, x, y, count) {
-    const starSize = 20;
-    const spacing = 30;
-    const startX = x - ((count - 1) * spacing) / 2;
-
-    for (let i = 0; i < count; i++) {
-      this.drawStar(ctx, startX + i * spacing, y, starSize, '#FFC107');
-    }
-  }
-
-  /**
-   * 绘制单个星星
-   */
-  drawStar(ctx, x, y, size, color) {
-    ctx.save();
-    ctx.fillStyle = color;
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
-    ctx.shadowBlur = 5;
-
-    ctx.beginPath();
-    for (let i = 0; i < 5; i++) {
-      const angle = (Math.PI * 2 * i) / 5 - Math.PI / 2;
-      const px = x + Math.cos(angle) * size;
-      const py = y + Math.sin(angle) * size;
-
-      if (i === 0) {
-        ctx.moveTo(px, py);
-      } else {
-        ctx.lineTo(px, py);
-      }
-
-      const innerAngle = angle + Math.PI / 5;
-      const innerX = x + Math.cos(innerAngle) * (size * 0.4);
-      const innerY = y + Math.sin(innerAngle) * (size * 0.4);
-      ctx.lineTo(innerX, innerY);
-    }
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-  }
-
-  /**
-   * 缓动函数：easeOutBack
+   * 缓动函数
    */
   easeOutBack(t) {
     const c1 = 1.70158;
@@ -409,9 +494,16 @@ export default class ModalRenderer {
   }
 
   /**
-   * 检查是否正在显示弹窗
+   * 检查是否显示弹窗
    */
   isModalVisible() {
     return this.currentModal !== null;
+  }
+
+  /**
+   * 获取确认回调
+   */
+  getConfirmCallback() {
+    return this.confirmCallback;
   }
 }

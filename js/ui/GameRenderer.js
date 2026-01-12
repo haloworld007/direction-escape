@@ -96,8 +96,11 @@ export default class GameRenderer {
 
   /**
    * 渲染游戏界面
+   * @param {CanvasRenderingContext2D} ctx - Canvas上下文
+   * @param {GameDataBus} databus - 游戏数据总线
+   * @param {string} propMode - 当前道具模式（'grab' | null）
    */
-  render(ctx, databus) {
+  render(ctx, databus, propMode = null) {
     // 绘制背景
     this.drawBackground(ctx);
 
@@ -110,8 +113,13 @@ export default class GameRenderer {
     // 绘制棋盘区域
     this.drawBoardArea(ctx, databus);
 
-    // 绘制底部道具栏
-    this.drawBottomBar(ctx);
+    // 如果在抓取模式，显示提示
+    if (propMode === 'grab') {
+      this.drawGrabModeHint(ctx);
+    }
+
+    // 绘制底部道具栏（传递道具模式以显示激活状态）
+    this.drawBottomBar(ctx, propMode);
   }
 
   /**
@@ -521,8 +529,10 @@ export default class GameRenderer {
 
   /**
    * 绘制底部道具栏（效果图风格 - 半透明）
+   * @param {CanvasRenderingContext2D} ctx - Canvas上下文
+   * @param {string} propMode - 当前道具模式（'grab' | null）
    */
-  drawBottomBar(ctx) {
+  drawBottomBar(ctx, propMode = null) {
     const screenWidth = canvas.width;
     const screenHeight = canvas.height;
     const bottomBarHeight = LAYOUT.BOTTOM_BAR_HEIGHT;
@@ -543,6 +553,13 @@ export default class GameRenderer {
     ctx.moveTo(0, bottomY);
     ctx.lineTo(screenWidth, bottomY);
     ctx.stroke();
+
+    // 设置道具按钮的激活状态
+    Object.entries(this.propButtons).forEach(([type, button]) => {
+      if (button) {
+        button.isActive = (propMode === type);
+      }
+    });
 
     // 绘制道具按钮
     Object.values(this.propButtons).forEach(button => {
@@ -607,5 +624,62 @@ export default class GameRenderer {
    */
   getBoardArea() {
     return this.boardArea;
+  }
+
+  /**
+   * 绘制抓取模式提示（半透明提示框）
+   */
+  drawGrabModeHint(ctx) {
+    const screenWidth = canvas.width;
+
+    // 提示框配置
+    const hintWidth = 280;
+    const hintHeight = 80;
+    const hintX = (screenWidth - hintWidth) / 2;
+    const hintY = 120; // 顶部栏下方
+
+    ctx.save();
+
+    // 半透明背景（橙色渐变）
+    const gradient = ctx.createLinearGradient(hintX, hintY, hintX, hintY + hintHeight);
+    gradient.addColorStop(0, 'rgba(255, 152, 0, 0.95)');
+    gradient.addColorStop(1, 'rgba(255, 87, 34, 0.95)');
+
+    // 绘制圆角矩形背景
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 5;
+    ctx.fillStyle = gradient;
+
+    const radius = 15;
+    ctx.beginPath();
+    ctx.moveTo(hintX + radius, hintY);
+    ctx.lineTo(hintX + hintWidth - radius, hintY);
+    ctx.quadraticCurveTo(hintX + hintWidth, hintY, hintX + hintWidth, hintY + radius);
+    ctx.lineTo(hintX + hintWidth, hintY + hintHeight - radius);
+    ctx.quadraticCurveTo(hintX + hintWidth, hintY + hintHeight, hintX + hintWidth - radius, hintY + hintHeight);
+    ctx.lineTo(hintX + radius, hintY + hintHeight);
+    ctx.quadraticCurveTo(hintX, hintY + hintHeight, hintX, hintY + hintHeight - radius);
+    ctx.lineTo(hintX, hintY + radius);
+    ctx.quadraticCurveTo(hintX, hintY, hintX + radius, hintY);
+    ctx.closePath();
+    ctx.fill();
+
+    // 清除阴影
+    ctx.shadowColor = 'transparent';
+
+    // 主标题文字（白色）
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = `bold ${FONT_SIZES.BUTTON + 4}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('点击要移除的方块', screenWidth / 2, hintY + 18);
+
+    // 副标题文字（白色，较小）
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.font = `${FONT_SIZES.HINT}px Arial`;
+    ctx.fillText('点击空白处取消', screenWidth / 2, hintY + 50);
+
+    ctx.restore();
   }
 }

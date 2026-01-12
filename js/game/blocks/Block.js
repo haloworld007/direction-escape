@@ -1,6 +1,6 @@
 /**
  * 方块类（更新版）
- * 每个方块有固定朝向（上/下/左/右）
+ * 每个方块有固定朝向（对角线 45°：右上/右下/左下/左上）
  * 可以检测是否可消除，执行消除动画等
  * 根据 PRD.md 第十三章节设计：胶囊状动物造型
  */
@@ -11,6 +11,11 @@ import { ANIMAL_TYPES, BLOCK_SIZES } from '../../ui/UIConstants';
 
 // 方向常量
 export const DIRECTIONS = {
+  // 兼容旧命名，但语义改为对角线方向（方块本体45°）
+  // UP   = 右上（NE）
+  // RIGHT= 右下（SE）
+  // DOWN = 左下（SW）
+  // LEFT = 左上（NW）
   UP: 0,
   RIGHT: 1,
   DOWN: 2,
@@ -24,6 +29,10 @@ export default class Block extends Sprite {
     // 核心属性
     this.direction = DIRECTIONS.UP; // 朝向
     this.type = ANIMAL_TYPES.CAT; // 动物类型（默认为猫）
+    this.shortSide = null; // 记录该方块的短边尺寸（用于翻转/洗牌时保持形状一致）
+    this.bodyWidth = 0;    // 胶囊本体宽（未旋转前，长边）
+    this.bodyHeight = 0;   // 胶囊本体高（未旋转前，短边）
+    this.rotation = 0;     // 当前旋转角（弧度）
     this.isRemoved = false; // 是否已消除
     this.isMoving = false; // 是否正在移动
     this.isShaking = false; // 是否正在抖动
@@ -65,21 +74,12 @@ export default class Block extends Sprite {
     // 计算胶囊尺寸
     const shortSide = size || BLOCK_SIZES.WIDTH;  // 短边（宽度）
     const longSide = shortSide * (BLOCK_SIZES.LENGTH / BLOCK_SIZES.WIDTH);  // 长边（长度），保持比例
-
-    // 根据方向设置尺寸（胶囊状）
-    const isVertical = direction === DIRECTIONS.UP || direction === DIRECTIONS.DOWN;
-
-    if (isVertical) {
-      // 竖向：宽度短边，高度长边
-      this.width = shortSide;
-      this.height = longSide;
-    } else {
-      // 横向：宽度长边，高度短边
-      this.width = longSide;
-      this.height = shortSide;
-    }
+    this.shortSide = shortSide;
+    this.bodyWidth = longSide;
+    this.bodyHeight = shortSide;
 
     this.direction = direction;
+    this.applyDirectionGeometry(direction, /*keepCenter*/ false);
     this.type = type;
     this.isRemoved = false;
     this.isMoving = false;
@@ -92,6 +92,62 @@ export default class Block extends Sprite {
     this.img = null;
 
     return this;
+  }
+
+  /**
+   * 对角线方向对应的旋转角（Canvas坐标系：y向下，rotate 正方向为顺时针）
+   */
+  static getDirectionAngle(direction) {
+    switch (direction) {
+      case DIRECTIONS.UP:    // 右上（NE）
+        return -Math.PI / 4;
+      case DIRECTIONS.RIGHT: // 右下（SE）
+        return Math.PI / 4;
+      case DIRECTIONS.DOWN:  // 左下（SW）
+        return (3 * Math.PI) / 4;
+      case DIRECTIONS.LEFT:  // 左上（NW）
+        return (-3 * Math.PI) / 4;
+      default:
+        return -Math.PI / 4;
+    }
+  }
+
+  /**
+   * 根据方向更新旋转角与碰撞盒尺寸
+   * - 碰撞盒 width/height 始终是“旋转后的 AABB”，用于点击/碰撞/阻挡检测
+   * - bodyWidth/bodyHeight 用于实际绘制（在渲染里再 rotate）
+   */
+  applyDirectionGeometry(direction, keepCenter = true) {
+    const centerX = this.x + this.width / 2;
+    const centerY = this.y + this.height / 2;
+
+    this.rotation = Block.getDirectionAngle(direction);
+
+    const bw = this.bodyWidth || 0;
+    const bh = this.bodyHeight || 0;
+    const c = Math.abs(Math.cos(this.rotation));
+    const s = Math.abs(Math.sin(this.rotation));
+    const bboxW = c * bw + s * bh;
+    const bboxH = s * bw + c * bh;
+    this.width = bboxW;
+    this.height = bboxH;
+
+    if (keepCenter) {
+      this.x = centerX - this.width / 2;
+      this.y = centerY - this.height / 2;
+    }
+    this.originalX = this.x;
+    this.originalY = this.y;
+  }
+
+  /**
+   * 设置方向（并保持中心点不变 + 同步尺寸）
+   * 用于洗牌方向等“直接改方向”的场景
+   */
+  setDirection(newDirection) {
+    this.direction = newDirection;
+    // 对角线方向：更新旋转与碰撞盒，保持中心不变
+    this.applyDirectionGeometry(newDirection, /*keepCenter*/ true);
   }
 
   /**
@@ -126,32 +182,30 @@ export default class Block extends Sprite {
     const screenWidth = canvas.width;
     const screenHeight = canvas.height;
 
-    switch (this.direction) {
-      case DIRECTIONS.UP:
-        this.targetX = this.x;
-        this.targetY = -this.height - 20; // 滑出顶部
-        break;
-      case DIRECTIONS.RIGHT:
-        this.targetX = screenWidth + 20; // 滑出右侧
-        this.targetY = this.y;
-        break;
-      case DIRECTIONS.DOWN:
-        this.targetX = this.x;
-        this.targetY = screenHeight + 20; // 滑出底部
-        break;
-      case DIRECTIONS.LEFT:
-        this.targetX = -this.width - 20; // 滑出左侧
-        this.targetY = this.y;
-        break;
-    }
+    // 对角线滑出：沿方向向量滑出屏幕外
+    const vec = this.getDirectionVector();
+    const cx = this.x + this.width / 2;
+    const cy = this.y + this.height / 2;
+    const ex = this.width / 2;
+    const ey = this.height / 2;
+
+    const tX = vec.x > 0 ? (screenWidth - ex - cx) / vec.x : (cx - ex) / (-vec.x);
+    const tY = vec.y > 0 ? (screenHeight - ey - cy) / vec.y : (cy - ey) / (-vec.y);
+    const tEdge = Math.max(0, Math.min(tX, tY));
+    const extra = 80;
+    const tc = tEdge + extra;
+    const targetCx = cx + vec.x * tc;
+    const targetCy = cy + vec.y * tc;
+    this.targetX = targetCx - this.width / 2;
+    this.targetY = targetCy - this.height / 2;
 
     // 根据滑动距离调整持续时间
     const dx = this.targetX - this.startX;
     const dy = this.targetY - this.startY;
     const distance = Math.sqrt(dx * dx + dy * dy);
     
-    // 短距离快一点，长距离慢一点（200-500ms）
-    this.slideDuration = Math.min(500, Math.max(200, distance * 0.8));
+    // 调慢滑动速度，让玩家能清楚看到滑出过程（260-650ms，约1.3倍原速）
+    this.slideDuration = Math.min(650, Math.max(260, distance * 1.0));
 
     // 触发事件
     this.emit('remove', this);
@@ -183,11 +237,33 @@ export default class Block extends Sprite {
   }
 
   /**
-   * 翻转朝向
+   * 翻转朝向（同时更新尺寸）
    * 用于道具效果
    */
   flip() {
-    this.direction = (this.direction + 2) % 4;
+    // 翻转方向：UP ↔ DOWN, RIGHT ↔ LEFT（对角线互换：NE↔SW, SE↔NW）
+    const newDirection = (this.direction + 2) % 4;
+    this.setDirection(newDirection);
+    console.log(`[Block] 翻转方块: 方向=${this.direction}, 尺寸=${this.width}x${this.height}, shortSide=${this.shortSide}`);
+  }
+
+  /**
+   * 获取对角线方向单位向量
+   */
+  getDirectionVector() {
+    const inv = 1 / Math.sqrt(2);
+    switch (this.direction) {
+      case DIRECTIONS.UP:    // 右上
+        return { x: inv, y: -inv };
+      case DIRECTIONS.RIGHT: // 右下
+        return { x: inv, y: inv };
+      case DIRECTIONS.DOWN:  // 左下
+        return { x: -inv, y: inv };
+      case DIRECTIONS.LEFT:  // 左上
+        return { x: -inv, y: -inv };
+      default:
+        return { x: inv, y: -inv };
+    }
   }
 
   /**
