@@ -57,17 +57,19 @@ export const COLORS = {
  * 方块尺寸（优化版 - 修复溢出问题）
  */
 export const BLOCK_SIZES = {
-  LENGTH: 40,         // 长度（横向）- 缩小25%以适应屏幕
+  // 胶囊长边：更贴近效果图（长度≈2×宽度+间距）
+  // 当前 WIDTH=24, SPACING=4 => LENGTH≈52
+  LENGTH: 52,
   WIDTH: 24,          // 宽度（纵向）- 缩小25%
   MIN_CLICK_AREA: 24, // 最小可点击区域
   SPACING: 4,         // 相邻方块间距
   CORNER_RADIUS: 10,  // 胶囊圆角
 
   // 网格单元计算（必须容纳最大尺寸）
-  GRID_CELL_SIZE: 46,        // 单元格大小：40px（长边）+ 6px间距
+  GRID_CELL_SIZE: 58,        // 单元格大小：约52px（长边）+ 6px间距
   GRID_SPACING: 6,           // 单元格之间间距
   SAFETY_MARGIN: 6,          // 防溢出安全边距
-  CAPSULE_ASPECT_RATIO: 40 / 24  // 胶囊长宽比 1.67:1
+  CAPSULE_ASPECT_RATIO: 52 / 24  // 胶囊长宽比 2.17:1
 };
 
 /**

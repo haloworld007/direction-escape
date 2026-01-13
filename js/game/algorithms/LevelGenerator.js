@@ -96,21 +96,24 @@ export default class LevelGenerator {
     const longSide = dimsSample.longSide;
     const bboxW = dimsSample.width;
     const bboxH = dimsSample.height;
+    const halfW = bboxW / 2;
+    const halfH = bboxH / 2;
 
-    // 格位尺寸：一个“动物占用空间”的距离
-    // - 横向以 longSide 为主，纵向以 shortSide 为主
-    // - 空一格=两只动物中心间距增加一个 slot（用户反馈要求）
-    // 用“旋转后碰撞盒”作为占位尺寸，保证密排不重叠
-    const slotX = bboxW + BLOCK_SIZES.SPACING + 4;
-    const slotY = bboxH + BLOCK_SIZES.SPACING + 4;
+    // 45°斜线对齐网格（等距，不压扁）：
+    // - 相邻格点沿两条45°对角线移动：(dx,dy) = (step,step) 或 (-step,step)
+    // - 为了“更紧凑但不重叠”，step 取 AABB 边长的最小不重叠距离
+    //   hasOverlap() 使用 margin=2，因此最小安全步长约为 bbox - 2*margin = bbox - 4
+    const step = Math.max(8, Math.max(bboxW, bboxH) - 4);
 
     // 安全边界（确保方块不会溢出棋盘）
-    const safeMargin = BLOCK_SIZES.SAFETY_MARGIN + longSide / 2;
+    // 注意：这里必须按旋转后的 AABB 计算，否则会出现“看起来溢出屏幕”的问题
+    const safeMarginX = BLOCK_SIZES.SAFETY_MARGIN + halfW;
+    const safeMarginY = BLOCK_SIZES.SAFETY_MARGIN + halfH;
     const safeBoardRect = {
-      x: boardRect.x + safeMargin,
-      y: boardRect.y + safeMargin,
-      width: boardRect.width - safeMargin * 2,
-      height: boardRect.height - safeMargin * 2
+      x: boardRect.x + safeMarginX,
+      y: boardRect.y + safeMarginY,
+      width: boardRect.width - safeMarginX * 2,
+      height: boardRect.height - safeMarginY * 2
     };
 
     // 布局中心
@@ -126,26 +129,23 @@ export default class LevelGenerator {
     const neededSlots = Math.ceil(blockCount / Math.max(0.25, (1 - gapRate)));
     const R = this.solveDiamondRadius(neededSlots);
 
+    // 生成菱形团块（|row|+|col|<=R），格点按45°斜线网格映射到屏幕坐标
     for (let row = -R; row <= R; row++) {
-      // 这一行最多能放的列数（菱形）
-      const rowWidth = (2 * R + 1) - Math.abs(row);
-      const startCol = -Math.floor(rowWidth / 2);
+      for (let col = -R; col <= R; col++) {
+        // 菱形边界：|row|+|col| <= R
+        if (Math.abs(row) + Math.abs(col) > R) continue;
 
-      for (let i = 0; i < rowWidth; i++) {
-        const col = startCol + i;
-
-        // 错位：每行偏移半格（形成“倾斜/蜂巢/砌砖”观感）
-        const offsetX = (row & 1) ? (slotX * 0.5) : 0;
-
-        // 以格位中心点定位
-        const x = centerX + col * slotX + offsetX;
-        const y = centerY + row * slotY;
+        // 45°斜线对齐：
+        // - 固定 (col-row) 的格点落在同一条从左上到右下的斜线上
+        // - 固定 (col+row) 的格点落在同一条从右上到左下的斜线上
+        const x = centerX + (col - row) * step;
+        const y = centerY + (col + row) * step;
 
         // 边界检查 - 确保方块不会超出安全区域
-        if (x - longSide / 2 < safeBoardRect.x ||
-            x + longSide / 2 > safeBoardRect.x + safeBoardRect.width ||
-            y - longSide / 2 < safeBoardRect.y ||
-            y + longSide / 2 > safeBoardRect.y + safeBoardRect.height) {
+        if (x - halfW < safeBoardRect.x ||
+            x + halfW > safeBoardRect.x + safeBoardRect.width ||
+            y - halfH < safeBoardRect.y ||
+            y + halfH > safeBoardRect.y + safeBoardRect.height) {
           continue; // 跳过超出边界的位置
         }
 
@@ -172,7 +172,7 @@ export default class LevelGenerator {
     // 生成方块
     selected.forEach((pos, index) => {
       // 方向分配策略：边缘朝外，内部随机
-      const direction = this.assignSmartDirection(pos, halfSize, centerX, centerY);
+      const direction = this.assignSmartDirection(pos, halfSize, centerX, centerY, rand);
 
       const { width: bw, height: bh } = this.getBlockDimensions(direction, shortSide);
 
@@ -235,35 +235,40 @@ export default class LevelGenerator {
 
   /**
    * 智能方向分配（确保边缘方块可消除）
+   * 45度斜线网格中，方向按象限分配：
+   * - UP(NE): 右上方向
+   * - RIGHT(SE): 右下方向
+   * - DOWN(SW): 左下方向
+   * - LEFT(NW): 左上方向
    */
-  static assignSmartDirection(pos, halfSize, centerX, centerY) {
-    const dx = pos.x - centerX;
-    const dy = pos.y - centerY;
+  static assignSmartDirection(pos, halfSize, centerX, centerY, rand = Math.random) {
     const distFromCenter = Math.abs(pos.row) + Math.abs(pos.col);
     const isEdge = distFromCenter >= halfSize * 0.7;
 
-    // 边缘方块：80%概率朝外
-    if (isEdge && Math.random() < 0.8) {
-      if (Math.abs(dx) > Math.abs(dy)) {
-        return dx > 0 ? DIRECTIONS.RIGHT : DIRECTIONS.LEFT;
-      } else {
-        return dy > 0 ? DIRECTIONS.DOWN : DIRECTIONS.UP;
-      }
+    // 使用 row/col 来确定象限（45度网格中更准确）
+    const { row, col } = pos;
+
+    // 边缘方块：80%概率朝外（按45度象限）
+    if (isEdge && rand() < 0.8) {
+      // 根据 row 和 col 的符号确定朝外方向
+      if (col >= 0 && row <= 0) return DIRECTIONS.UP;      // 右上象限 → NE
+      if (col >= 0 && row >= 0) return DIRECTIONS.RIGHT;   // 右下象限 → SE
+      if (col <= 0 && row >= 0) return DIRECTIONS.DOWN;    // 左下象限 → SW
+      return DIRECTIONS.LEFT;                               // 左上象限 → NW
     }
 
     // 内部方块：随机方向，但略微倾向于朝向边缘
     const directions = [DIRECTIONS.UP, DIRECTIONS.RIGHT, DIRECTIONS.DOWN, DIRECTIONS.LEFT];
     
-    if (Math.random() < 0.4) {
-      // 40%概率朝向边缘
-      if (Math.abs(dx) > Math.abs(dy)) {
-        return dx > 0 ? DIRECTIONS.RIGHT : DIRECTIONS.LEFT;
-      } else {
-        return dy > 0 ? DIRECTIONS.DOWN : DIRECTIONS.UP;
-      }
+    if (rand() < 0.4) {
+      // 40%概率朝向边缘（按45度象限）
+      if (col >= 0 && row <= 0) return DIRECTIONS.UP;
+      if (col >= 0 && row >= 0) return DIRECTIONS.RIGHT;
+      if (col <= 0 && row >= 0) return DIRECTIONS.DOWN;
+      return DIRECTIONS.LEFT;
     }
 
-    return directions[Math.floor(Math.random() * 4)];
+    return directions[Math.floor(rand() * 4)];
   }
 
   /**
@@ -295,17 +300,17 @@ export default class LevelGenerator {
         return { idx, dx, dy, dist };
       }).sort((a, b) => b.dist - a.dist);
 
-      // 调整最外层10%的方块朝向
+      // 调整最外层10%的方块朝向（按45度象限朝外）
       const adjustCount = Math.ceil(blocks.length * 0.1);
       for (let i = 0; i < adjustCount && i < scored.length; i++) {
         const s = scored[i];
         const block = blocks[s.idx];
         
-        if (Math.abs(s.dx) > Math.abs(s.dy)) {
-          block.direction = s.dx > 0 ? DIRECTIONS.RIGHT : DIRECTIONS.LEFT;
-        } else {
-          block.direction = s.dy > 0 ? DIRECTIONS.DOWN : DIRECTIONS.UP;
-        }
+        // 45度象限方向分配
+        if (s.dx >= 0 && s.dy <= 0) block.direction = DIRECTIONS.UP;      // 右上 → NE
+        else if (s.dx >= 0 && s.dy >= 0) block.direction = DIRECTIONS.RIGHT; // 右下 → SE
+        else if (s.dx <= 0 && s.dy >= 0) block.direction = DIRECTIONS.DOWN;  // 左下 → SW
+        else block.direction = DIRECTIONS.LEFT;                              // 左上 → NW
 
         // 更新方块尺寸
         const { width: bw, height: bh } = this.getBlockDimensions(block.direction, shortSide);
@@ -326,8 +331,8 @@ export default class LevelGenerator {
     const blocks = [];
     const { blockCount, blockSize } = params;
     const shortSide = blockSize || 20;  // 更小的默认尺寸
-    const { longSide } = this.getBlockDimensions(DIRECTIONS.RIGHT, shortSide);
-    const step = longSide + BLOCK_SIZES.SPACING + 2; // 增加间距
+    const dims = this.getBlockDimensions(DIRECTIONS.UP, shortSide);
+    const step = Math.max(dims.width, dims.height) + BLOCK_SIZES.SPACING + 2;
 
     const centerX = boardRect.x + boardRect.width / 2;
     const centerY = boardRect.y + boardRect.height / 2;
@@ -339,13 +344,12 @@ export default class LevelGenerator {
       const x = centerX + pos.dx;
       const y = centerY + pos.dy;
 
-      // 外圈朝外
+      // 外圈朝外（按45度象限）
       let direction;
-      if (Math.abs(pos.dx) > Math.abs(pos.dy)) {
-        direction = pos.dx > 0 ? DIRECTIONS.RIGHT : DIRECTIONS.LEFT;
-      } else {
-        direction = pos.dy > 0 ? DIRECTIONS.DOWN : DIRECTIONS.UP;
-      }
+      if (pos.dx >= 0 && pos.dy <= 0) direction = DIRECTIONS.UP;        // 右上 → NE
+      else if (pos.dx >= 0 && pos.dy >= 0) direction = DIRECTIONS.RIGHT; // 右下 → SE
+      else if (pos.dx <= 0 && pos.dy >= 0) direction = DIRECTIONS.DOWN;  // 左下 → SW
+      else direction = DIRECTIONS.LEFT;                                   // 左上 → NW
 
       const { width: bw, height: bh } = this.getBlockDimensions(direction, shortSide);
       const animalType = this.ANIMAL_TYPES[index % this.ANIMAL_TYPES.length];
@@ -458,10 +462,10 @@ export default class LevelGenerator {
    * 获取难度参数（优化版：使用更小的方块避免溢出）
    */
   static getDifficultyParams(level) {
-    // 基础方块尺寸（与渲染体系一致）
-    const SMALL_BLOCK = BLOCK_SIZES.WIDTH;       // 24
-    const MEDIUM_BLOCK = BLOCK_SIZES.WIDTH + 2;  // 26
-    const LARGE_BLOCK = BLOCK_SIZES.WIDTH + 4;   // 28
+    // 基础方块尺寸（修正：当前胶囊更长，如果仍用 24/26/28 会导致溢出）
+    const SMALL_BLOCK = 18;
+    const MEDIUM_BLOCK = 20;
+    const LARGE_BLOCK = 22;
 
     if (level <= 3) {
       // 教学关：较少方块，让玩家熟悉

@@ -118,7 +118,7 @@ export default class DirectionDetector {
       return false;
     }
 
-    return true;
+        return true;
   }
 
   /**

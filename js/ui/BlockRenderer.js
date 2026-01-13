@@ -29,13 +29,13 @@ export default class BlockRenderer {
     ctx.save();
 
     // 以碰撞盒中心为原点，旋转绘制“胶囊本体45°”
-    const centerX = x + width / 2;
-    const centerY = y + height / 2;
+      const centerX = x + width / 2;
+      const centerY = y + height / 2;
     const bodyW = block.bodyWidth || Math.max(width, height);
     const bodyH = block.bodyHeight || Math.min(width, height);
     const rotation = typeof block.rotation === 'number' ? block.rotation : 0;
 
-    ctx.translate(centerX, centerY);
+      ctx.translate(centerX, centerY);
     if (scale !== 1) ctx.scale(scale, scale);
     ctx.rotate(rotation);
 

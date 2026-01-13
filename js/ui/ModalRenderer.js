@@ -462,18 +462,18 @@ export default class ModalRenderer {
     for (let i = 0; i < count; i++) {
       const cx = startX + i * spacing;
       // 简单的五角星
-      ctx.beginPath();
+    ctx.beginPath();
       for (let j = 0; j < 5; j++) {
         const angle = (Math.PI * 2 * j) / 5 - Math.PI / 2;
         const px = cx + Math.cos(angle) * size;
-        const py = y + Math.sin(angle) * size;
+      const py = y + Math.sin(angle) * size;
         if (j === 0) ctx.moveTo(px, py);
         else ctx.lineTo(px, py);
-        const innerAngle = angle + Math.PI / 5;
+      const innerAngle = angle + Math.PI / 5;
         ctx.lineTo(cx + Math.cos(innerAngle) * (size * 0.4), y + Math.sin(innerAngle) * (size * 0.4));
-      }
-      ctx.closePath();
-      ctx.fill();
+    }
+    ctx.closePath();
+    ctx.fill();
     }
   }
 
