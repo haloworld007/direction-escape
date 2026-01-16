@@ -103,7 +103,7 @@ export default class LevelGenerator {
     const { blockCount, blockSize } = params;
 
     let shortSide = blockSize || BLOCK_SIZES.WIDTH;
-    const minShortSide = 14;
+    const minShortSide = 12;
     const rand = this.createSeededRandom(seed);
     const holeRate = this.pickHoleRate(params, rand);
 
@@ -763,31 +763,31 @@ export default class LevelGenerator {
    * 获取难度参数（旋转网格 + 双格方块）
    */
   static getDifficultyParams(level) {
-    const SMALL_BLOCK = 16;
-    const MEDIUM_BLOCK = 18;
-    const LARGE_BLOCK = 20;
+    const SMALL_BLOCK = 14;
+    const MEDIUM_BLOCK = 16;
+    const LARGE_BLOCK = 18;
 
     if (level <= 3) {
       return {
-        blockCount: 62 + level * 6,  // 68-80
+        blockCount: 74 + level * 6,  // 80-92
         blockSize: LARGE_BLOCK,
         holeRateRange: [0.08, 0.14]
       };
     } else if (level <= 10) {
       return {
-        blockCount: 84 + (level - 3) * 6,  // 90-126
+        blockCount: 96 + (level - 3) * 6,  // 102-138
         blockSize: MEDIUM_BLOCK,
         holeRateRange: [0.08, 0.12]
       };
     } else if (level <= 20) {
       return {
-        blockCount: 114 + (level - 10) * 5,  // 119-164
+        blockCount: 126 + (level - 10) * 5,  // 131-176
         blockSize: SMALL_BLOCK,
         holeRateRange: [0.06, 0.1]
       };
     } else {
       return {
-        blockCount: Math.min(200, 145 + (level - 20) * 4),
+        blockCount: Math.min(220, 155 + (level - 20) * 4),
         blockSize: SMALL_BLOCK,
         holeRateRange: [0.05, 0.08]
       };

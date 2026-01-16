@@ -59,20 +59,20 @@ export const COLORS = {
 export const BLOCK_SIZES = {
   // 胶囊长边：更贴近效果图（长度≈2×宽度+间距）
   // 当前 WIDTH=20, SPACING=4 => LENGTH≈44
-  LENGTH: 44,
-  WIDTH: 20,          // 宽度（纵向）- 缩小
+  LENGTH: 40,
+  WIDTH: 18,          // 宽度（纵向）- 再缩小
   MIN_CLICK_AREA: 24, // 最小可点击区域
   SPACING: 2,         // 相邻方块间距
-  CORNER_RADIUS: 8,   // 胶囊圆角
+  CORNER_RADIUS: 7,   // 胶囊圆角
 
   // 网格单元计算（必须容纳最大尺寸）
-  GRID_CELL_SIZE: 48,        // 单元格大小：约44px（长边）+ 4px间距
+  GRID_CELL_SIZE: 44,        // 单元格大小：约40px（长边）+ 4px间距
   GRID_SPACING: 4,           // 单元格之间间距
   SAFETY_MARGIN: 6,          // 防溢出安全边距
   RENDER_MARGIN: 10,         // 渲染外扩余量（阴影/描边/缩放）
   HITBOX_INSET: 4,           // 逻辑碰撞内缩（减少AABB误判）
   COLLISION_SHRINK: 0.22,    // 阻挡检测内缩比例
-  CAPSULE_ASPECT_RATIO: 44 / 20  // 胶囊长宽比 2.2:1
+  CAPSULE_ASPECT_RATIO: 40 / 18  // 胶囊长宽比 2.2:1
 };
 
 /**
@@ -184,7 +184,9 @@ export const ANIMAL_TYPES = {
 export const MAIN_ANIMAL_TYPES = [
   ANIMAL_TYPES.PIG,
   ANIMAL_TYPES.SHEEP,
-  ANIMAL_TYPES.DOG
+  ANIMAL_TYPES.DOG,
+  ANIMAL_TYPES.FOX,
+  ANIMAL_TYPES.PANDA
 ];
 
 /**
@@ -212,7 +214,7 @@ export const ANIMAL_COLORS = {
   rabbit: '#F5F5F5',   // 白色系
   bear: '#D7CCC8',     // 浅棕色系
   fox: '#FF7043',      // 红色系
-  panda: '#333333'     // 黑白配色
+  panda: '#4B4B4B'     // 黑白配色（提亮）
 };
 
 /**
