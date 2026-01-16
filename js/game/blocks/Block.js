@@ -28,7 +28,7 @@ export default class Block extends Sprite {
 
     // 核心属性
     this.direction = DIRECTIONS.UP; // 朝向
-    this.type = ANIMAL_TYPES.CAT; // 动物类型（默认为猫）
+    this.type = ANIMAL_TYPES.PIG; // 动物类型（默认主动物）
     this.shortSide = null; // 记录该方块的短边尺寸（用于翻转/洗牌时保持形状一致）
     this.bodyWidth = 0;    // 胶囊本体宽（未旋转前，长边）
     this.bodyHeight = 0;   // 胶囊本体高（未旋转前，短边）
@@ -67,7 +67,7 @@ export default class Block extends Sprite {
    * @param {string} type - 动物类型
    * @param {number|null} size - 自定义尺寸（短边长度），null则使用默认尺寸
    */
-  init(x, y, direction, type = ANIMAL_TYPES.CAT, size = null) {
+  init(x, y, direction, type = ANIMAL_TYPES.PIG, size = null) {
     this.x = x;
     this.y = y;
 

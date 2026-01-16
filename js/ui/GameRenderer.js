@@ -415,105 +415,81 @@ export default class GameRenderer {
   }
 
   /**
-   * 绘制进度显示（可爱小猴子 + 进度百分比）
+   * 绘制进度显示（小熊猫 + 进度百分比）
    */
   drawProgress(ctx, databus) {
     const progress = databus.getProgress();
     const rightX = canvas.width - LAYOUT.SIDE_PADDING;
-    const monkeyX = rightX - 30;
-    const monkeyY = 75;
+    const avatarX = rightX - 30;
+    const avatarY = 75;
 
-    ctx.save();
-    
-    // 小猴子身体
-    ctx.fillStyle = '#D2691E';
-    ctx.beginPath();
-    ctx.ellipse(monkeyX, monkeyY + 25, 12, 15, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 小猴子头部
-    ctx.fillStyle = '#D2691E';
-    ctx.beginPath();
-    ctx.arc(monkeyX, monkeyY, 18, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 耳朵
-    ctx.fillStyle = '#FFE4C4';
-    ctx.beginPath();
-    ctx.arc(monkeyX - 16, monkeyY - 8, 7, 0, Math.PI * 2);
-    ctx.arc(monkeyX + 16, monkeyY - 8, 7, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#DEB887';
-    ctx.beginPath();
-    ctx.arc(monkeyX - 16, monkeyY - 8, 4, 0, Math.PI * 2);
-    ctx.arc(monkeyX + 16, monkeyY - 8, 4, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 脸部（浅色）
-    ctx.fillStyle = '#FFE4C4';
-    ctx.beginPath();
-    ctx.ellipse(monkeyX, monkeyY + 4, 12, 10, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 眼睛
-    ctx.fillStyle = '#FFF';
-    ctx.beginPath();
-    ctx.ellipse(monkeyX - 6, monkeyY - 2, 5, 6, 0, 0, Math.PI * 2);
-    ctx.ellipse(monkeyX + 6, monkeyY - 2, 5, 6, 0, 0, Math.PI * 2);
-    ctx.fill();
-    
-    // 眼珠
-    ctx.fillStyle = '#333';
-    ctx.beginPath();
-    ctx.arc(monkeyX - 5, monkeyY - 1, 3, 0, Math.PI * 2);
-    ctx.arc(monkeyX + 7, monkeyY - 1, 3, 0, Math.PI * 2);
-    ctx.fill();
-    
-    // 眼睛高光
-    ctx.fillStyle = '#FFF';
-    ctx.beginPath();
-    ctx.arc(monkeyX - 6, monkeyY - 2, 1, 0, Math.PI * 2);
-    ctx.arc(monkeyX + 6, monkeyY - 2, 1, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 鼻子
-    ctx.fillStyle = '#8B4513';
-    ctx.beginPath();
-    ctx.ellipse(monkeyX, monkeyY + 5, 3, 2, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 嘴巴
-    ctx.strokeStyle = '#8B4513';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(monkeyX, monkeyY + 6, 4, 0.2, Math.PI - 0.2);
-    ctx.stroke();
-
-    // 手臂（挥手姿势）
-    ctx.fillStyle = '#D2691E';
-    ctx.beginPath();
-    ctx.ellipse(monkeyX + 18, monkeyY + 15, 5, 10, 0.5, 0, Math.PI * 2);
-    ctx.fill();
-    
-    // 头发/头顶毛发
-    ctx.strokeStyle = '#8B4513';
-    ctx.lineWidth = 2;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(monkeyX - 3, monkeyY - 16);
-    ctx.lineTo(monkeyX - 5, monkeyY - 22);
-    ctx.moveTo(monkeyX + 3, monkeyY - 16);
-    ctx.lineTo(monkeyX + 5, monkeyY - 22);
-    ctx.stroke();
-
-    ctx.restore();
+    this.drawPandaAvatar(ctx, avatarX, avatarY);
 
     // 进度文字（黑色，更醒目）
     ctx.fillStyle = '#333';
     ctx.font = `bold ${FONT_SIZES.HINT}px Arial`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillText(`进度${progress}%`, monkeyX, monkeyY + 50);
+    ctx.fillText(`进度${progress}%`, avatarX, avatarY + 46);
+  }
+
+  drawPandaAvatar(ctx, x, y) {
+    const size = 32;
+
+    ctx.save();
+
+    // 身体
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.ellipse(x, y + 10, size * 0.32, size * 0.28, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 头部
+    ctx.beginPath();
+    ctx.arc(x, y, size * 0.28, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 耳朵
+    ctx.fillStyle = '#333';
+    ctx.beginPath();
+    ctx.arc(x - size * 0.22, y - size * 0.22, size * 0.12, 0, Math.PI * 2);
+    ctx.arc(x + size * 0.22, y - size * 0.22, size * 0.12, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 黑眼圈
+    ctx.beginPath();
+    ctx.ellipse(x - size * 0.13, y - size * 0.02, size * 0.11, size * 0.13, -0.2, 0, Math.PI * 2);
+    ctx.ellipse(x + size * 0.13, y - size * 0.02, size * 0.11, size * 0.13, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 眼睛
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.arc(x - size * 0.11, y - size * 0.02, size * 0.05, 0, Math.PI * 2);
+    ctx.arc(x + size * 0.11, y - size * 0.02, size * 0.05, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 眼珠
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.arc(x - size * 0.1, y - size * 0.02, size * 0.025, 0, Math.PI * 2);
+    ctx.arc(x + size * 0.1, y - size * 0.02, size * 0.025, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 鼻子
+    ctx.beginPath();
+    ctx.ellipse(x, y + size * 0.08, size * 0.05, size * 0.03, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 微笑
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1.2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(x, y + size * 0.06, size * 0.08, 0.2, Math.PI - 0.2);
+    ctx.stroke();
+
+    ctx.restore();
   }
 
   /**

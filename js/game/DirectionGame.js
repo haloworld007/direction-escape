@@ -10,6 +10,7 @@
 import GameDataBus from './GameDataBus';
 import LevelManager from './LevelManager';
 import DeadlockDetector from './algorithms/DeadlockDetector';
+import { BLOCK_SIZES } from '../ui/UIConstants';
 import MenuRenderer from '../ui/MenuRenderer';
 import GameRenderer from '../ui/GameRenderer';
 import ModalRenderer from '../ui/ModalRenderer';
@@ -428,8 +429,13 @@ export default class DirectionGame {
    * 判断触摸点是否在方块内
    */
   isTouchInBlock(x, y, block) {
-    return x >= block.x && x <= block.x + block.width &&
-           y >= block.y && y <= block.y + block.height;
+    const inset = BLOCK_SIZES.HITBOX_INSET || 0;
+    const left = block.x + inset;
+    const top = block.y + inset;
+    const right = block.x + block.width - inset;
+    const bottom = block.y + block.height - inset;
+    if (right <= left || bottom <= top) return false;
+    return x >= left && x <= right && y >= top && y <= bottom;
   }
 
   /**

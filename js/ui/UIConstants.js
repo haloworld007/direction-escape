@@ -62,13 +62,15 @@ export const BLOCK_SIZES = {
   LENGTH: 52,
   WIDTH: 24,          // 宽度（纵向）- 缩小25%
   MIN_CLICK_AREA: 24, // 最小可点击区域
-  SPACING: 4,         // 相邻方块间距
+  SPACING: 2,         // 相邻方块间距
   CORNER_RADIUS: 10,  // 胶囊圆角
 
   // 网格单元计算（必须容纳最大尺寸）
-  GRID_CELL_SIZE: 58,        // 单元格大小：约52px（长边）+ 6px间距
-  GRID_SPACING: 6,           // 单元格之间间距
+  GRID_CELL_SIZE: 56,        // 单元格大小：约52px（长边）+ 4px间距
+  GRID_SPACING: 4,           // 单元格之间间距
   SAFETY_MARGIN: 6,          // 防溢出安全边距
+  RENDER_MARGIN: 10,         // 渲染外扩余量（阴影/描边/缩放）
+  HITBOX_INSET: 6,           // 逻辑碰撞内缩（减少AABB误判）
   CAPSULE_ASPECT_RATIO: 52 / 24  // 胶囊长宽比 2.17:1
 };
 

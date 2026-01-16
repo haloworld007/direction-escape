@@ -1,7 +1,7 @@
 /**
- * 随机关卡生成算法（PRD v1.3 更新版）
+ * 随机关卡生成算法（旋转网格 + 双格方块）
  * 根据关卡号生成合适的难度布局
- * 参考截图：菱形紧密排列，80-120个方块
+ * 规则：正方形网格生成槽位，整体旋转45度，每个动物占据两个相邻格子
  */
 import DirectionDetector from './DirectionDetector';
 import { DIRECTIONS } from '../blocks/Block';
@@ -55,6 +55,10 @@ export default class LevelGenerator {
     }
   }
 
+  static getSeed(levelNumber, attempt) {
+    return (levelNumber + 1) * 10007 + attempt * 97;
+  }
+
   /**
    * 生成关卡（主入口）
    */
@@ -64,125 +68,108 @@ export default class LevelGenerator {
 
     console.log(`[LevelGenerator] 生成关卡 ${levelNumber}, 目标方块数: ${params.blockCount}`);
 
-    // 尝试生成“真正45度旋转 + 有空隙”的布局（用户反馈要求）
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const blocks = this.generateDiagonalSparseLayout(params, levelNumber, screenWidth, screenHeight, boardRect);
+    let lastBlocks = [];
+    const maxAttempts = 6;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const seed = this.getSeed(levelNumber, attempt);
+      const blocks = this.generateRotatedGridDominoLayout(
+        params,
+        seed,
+        screenWidth,
+        screenHeight,
+        boardRect
+      );
+      lastBlocks = blocks;
 
-      // 验证关卡可解性
-      if (this.validateLevel(blocks, screenWidth, screenHeight)) {
+      if (this.validateLevel(blocks, screenWidth, screenHeight, seed)) {
         console.log(`[LevelGenerator] 关卡 ${levelNumber} 生成成功，方块数: ${blocks.length}，尝试: ${attempt + 1}`);
         return { blocks, total: blocks.length };
       }
     }
 
-    // 后备方案
-    console.warn(`[LevelGenerator] 关卡 ${levelNumber} 使用后备布局`);
-    return this.generateSimpleLayout(params, screenWidth, screenHeight, boardRect);
+    console.warn(`[LevelGenerator] 关卡 ${levelNumber} 未通过验证，返回最后一次布局`);
+    return { blocks: lastBlocks, total: lastBlocks.length };
   }
 
   /**
-   * 生成真正45度旋转的稀疏菱形布局
-   * PRD 4.1 要求的是“错位网格布局（菱形密排）/蜂巢/砌砖结构”：
-   * - 通过“每行水平偏移半格”形成整体45°倾斜观感
-   * - 所有方块严格落在离散格位（空隙=空出一个完整格位）
+   * 生成旋转网格 + 双格方块布局
+   * 规则：
+   * - 正方形网格生成格子，整体旋转45度
+   * - 每个动物占据两个相邻格子（头尾方向随机）
+   * - 格子之间保持固定间距
    */
-  static generateDiagonalSparseLayout(params, levelNumber, screenWidth, screenHeight, boardRect) {
+  static generateRotatedGridDominoLayout(params, seed, screenWidth, screenHeight, boardRect) {
     const blocks = [];
-    const { blockCount, blockSize, skipRate } = params;
+    const { blockCount, blockSize } = params;
 
-    // 方块尺寸：优先使用 BLOCK_SIZES.WIDTH 的体系（保证渲染比例一致），难度可略调
-    const shortSide = blockSize || BLOCK_SIZES.WIDTH;
-    const dimsSample = this.getBlockDimensions(DIRECTIONS.UP, shortSide);
-    const longSide = dimsSample.longSide;
-    const bboxW = dimsSample.width;
-    const bboxH = dimsSample.height;
-    const halfW = bboxW / 2;
-    const halfH = bboxH / 2;
+    let shortSide = blockSize || BLOCK_SIZES.WIDTH;
+    const minShortSide = 14;
+    const rand = this.createSeededRandom(seed);
+    const holeRate = this.pickHoleRate(params, rand);
 
-    // 45°斜线对齐网格（等距，不压扁）：
-    // - 相邻格点沿两条45°对角线移动：(dx,dy) = (step,step) 或 (-step,step)
-    // - 为了“更紧凑但不重叠”，step 取 AABB 边长的最小不重叠距离
-    //   hasOverlap() 使用 margin=2，因此最小安全步长约为 bbox - 2*margin = bbox - 4
-    const step = Math.max(8, Math.max(bboxW, bboxH) - 4);
-
-    // 安全边界（确保方块不会溢出棋盘）
-    // 注意：这里必须按旋转后的 AABB 计算，否则会出现“看起来溢出屏幕”的问题
-    const safeMarginX = BLOCK_SIZES.SAFETY_MARGIN + halfW;
-    const safeMarginY = BLOCK_SIZES.SAFETY_MARGIN + halfH;
-    const safeBoardRect = {
-      x: boardRect.x + safeMarginX,
-      y: boardRect.y + safeMarginY,
-      width: boardRect.width - safeMarginX * 2,
-      height: boardRect.height - safeMarginY * 2
-    };
-
-    // 布局中心
-    const centerX = safeBoardRect.x + safeBoardRect.width / 2;
-    const centerY = safeBoardRect.y + safeBoardRect.height / 2;
-
-    // 关卡种子随机：保证“同一关卡”布局稳定，避免每次进来都乱
-    const rand = this.createSeededRandom(levelNumber);
-
-    // 生成候选格位（菱形团块），每行偏移半格形成45°倾斜观感
-    const candidates = [];
-    const gapRate = typeof skipRate === 'number' ? skipRate : 0.28; // “空隙占比”
-    const neededSlots = Math.ceil(blockCount / Math.max(0.25, (1 - gapRate)));
-    const R = this.solveDiamondRadius(neededSlots);
-
-    // 生成菱形团块（|row|+|col|<=R），格点按45°斜线网格映射到屏幕坐标
-    for (let row = -R; row <= R; row++) {
-      for (let col = -R; col <= R; col++) {
-        // 菱形边界：|row|+|col| <= R
-        if (Math.abs(row) + Math.abs(col) > R) continue;
-
-        // 45°斜线对齐：
-        // - 固定 (col-row) 的格点落在同一条从左上到右下的斜线上
-        // - 固定 (col+row) 的格点落在同一条从右上到左下的斜线上
-        const x = centerX + (col - row) * step;
-        const y = centerY + (col + row) * step;
-
-        // 边界检查 - 确保方块不会超出安全区域
-        if (x - halfW < safeBoardRect.x ||
-            x + halfW > safeBoardRect.x + safeBoardRect.width ||
-            y - halfH < safeBoardRect.y ||
-            y + halfH > safeBoardRect.y + safeBoardRect.height) {
-          continue; // 跳过超出边界的位置
-        }
-
-        // 距离中心（用于方向分配/可解性修正）
-        const dist = Math.abs(col) + Math.abs(row);
-
-        candidates.push({ x, y, row, col, dist });
-      }
+    let layout = this.computeDominoGridLayout(shortSide, holeRate, boardRect);
+    while (blockCount > layout.maxBlocks && shortSide > minShortSide) {
+      shortSide -= 2;
+      layout = this.computeDominoGridLayout(shortSide, holeRate, boardRect);
     }
+    const overlapMargin = Math.max(BLOCK_SIZES.HITBOX_INSET || 0, Math.round(shortSide * 0.25));
 
-    // 如果候选不足，直接回退（让外层重试/后备布局）
-    if (candidates.length < blockCount) return blocks;
+    const targetBlockCount = Math.min(blockCount, layout.maxBlocks);
+    if (targetBlockCount <= 0 || layout.candidates.length < 2) return blocks;
 
-    // 随机选择 blockCount 个格点（剩下的自然就是空隙），但格点本身依然严格对齐
-    this.shuffleArray(candidates, rand);
+    const {
+      candidates,
+      safeBoardRect,
+      centerX,
+      centerY
+    } = layout;
 
-    const selected = candidates.slice(0, blockCount);
-    // 再按距离排序（外到内），用于更合理的方向分配
-    selected.sort((a, b) => b.dist - a.dist);
+    const cellMap = new Map();
+    candidates.forEach(cell => cellMap.set(cell.key, cell));
 
-    // 用于方向分配的半径（与 dist 同量纲）
-    const halfSize = R;
+    const holeCount = Math.max(0, Math.min(
+      Math.floor(candidates.length * holeRate),
+      candidates.length - targetBlockCount * 2
+    ));
+    const holes = this.selectSparseHoles(candidates, holeCount, rand);
 
-    // 生成方块
-    selected.forEach((pos, index) => {
-      // 方向分配策略：边缘朝外，内部随机
-      const direction = this.assignSmartDirection(pos, halfSize, centerX, centerY, rand);
+    const used = new Set(holes);
+    const ordered = this.orderCandidatesCenterOut(candidates, rand);
+
+    let placed = 0;
+    for (const cell of ordered) {
+      if (placed >= targetBlockCount) break;
+      if (used.has(cell.key)) continue;
+
+      const neighbors = this.getAvailableNeighbors(cell, cellMap, used);
+      if (neighbors.length === 0) continue;
+
+      const neighbor = neighbors[Math.floor(rand() * neighbors.length)];
+      const blockCenterX = (cell.x + neighbor.x) / 2;
+      const blockCenterY = (cell.y + neighbor.y) / 2;
+      const direction = this.pickDirectionForPair(
+        cell,
+        neighbor,
+        blockCenterX,
+        blockCenterY,
+        centerX,
+        centerY,
+        rand
+      );
 
       const { width: bw, height: bh } = this.getBlockDimensions(direction, shortSide);
+      const blockX = blockCenterX - bw / 2;
+      const blockY = blockCenterY - bh / 2;
 
-      // 方块位置（以格点为中心）
-      const blockX = pos.x - bw / 2;
-      const blockY = pos.y - bh / 2;
+      if (!this.isBlockInsideSafeRect(blockX, blockY, bw, bh, safeBoardRect)) {
+        continue;
+      }
 
-      // 动物类型（循环使用主要3种）
-      const animalType = this.ANIMAL_TYPES[index % this.ANIMAL_TYPES.length];
+      if (this.wouldOverlap(blockX, blockY, bw, bh, blocks, overlapMargin)) {
+        continue;
+      }
 
+      const animalType = this.ANIMAL_TYPES[blocks.length % this.ANIMAL_TYPES.length];
       blocks.push({
         x: blockX,
         y: blockY,
@@ -192,22 +179,67 @@ export default class LevelGenerator {
         type: animalType,
         size: shortSide
       });
-    });
 
-    // 确保有足够的可消除方块
+      used.add(cell.key);
+      used.add(neighbor.key);
+      placed++;
+    }
+
+    // 二次补充：随机顺序再尝试填充，尽量接近目标数量
+    if (placed < targetBlockCount) {
+      const shuffled = [...candidates];
+      this.shuffleArray(shuffled, rand);
+      for (const cell of shuffled) {
+        if (placed >= targetBlockCount) break;
+        if (used.has(cell.key)) continue;
+
+        const neighbors = this.getAvailableNeighbors(cell, cellMap, used);
+        if (neighbors.length === 0) continue;
+
+        const neighbor = neighbors[Math.floor(rand() * neighbors.length)];
+        const blockCenterX = (cell.x + neighbor.x) / 2;
+        const blockCenterY = (cell.y + neighbor.y) / 2;
+        const direction = this.pickDirectionForPair(
+          cell,
+          neighbor,
+          blockCenterX,
+          blockCenterY,
+          centerX,
+          centerY,
+          rand
+        );
+        const { width: bw, height: bh } = this.getBlockDimensions(direction, shortSide);
+        const blockX = blockCenterX - bw / 2;
+        const blockY = blockCenterY - bh / 2;
+
+        if (!this.isBlockInsideSafeRect(blockX, blockY, bw, bh, safeBoardRect)) {
+          continue;
+        }
+
+        if (this.wouldOverlap(blockX, blockY, bw, bh, blocks, overlapMargin)) {
+          continue;
+        }
+
+        const animalType = this.ANIMAL_TYPES[blocks.length % this.ANIMAL_TYPES.length];
+        blocks.push({
+          x: blockX,
+          y: blockY,
+          width: bw,
+          height: bh,
+          direction,
+          type: animalType,
+          size: shortSide
+        });
+
+        used.add(cell.key);
+        used.add(neighbor.key);
+        placed++;
+      }
+    }
+
     this.ensureRemovableBlocks(blocks, screenWidth, screenHeight, centerX, centerY, shortSide);
 
     return blocks;
-  }
-
-  /**
-   * 计算菱形网格半径 R，使得 |r|+|c|<=R 的格点数量 >= needed
-   * 格点数公式：1 + 2R(R+1)
-   */
-  static solveDiamondRadius(needed) {
-    let R = 0;
-    while (1 + 2 * R * (R + 1) < needed) R++;
-    return R;
   }
 
   /**
@@ -233,42 +265,193 @@ export default class LevelGenerator {
     }
   }
 
-  /**
-   * 智能方向分配（确保边缘方块可消除）
-   * 45度斜线网格中，方向按象限分配：
-   * - UP(NE): 右上方向
-   * - RIGHT(SE): 右下方向
-   * - DOWN(SW): 左下方向
-   * - LEFT(NW): 左上方向
-   */
-  static assignSmartDirection(pos, halfSize, centerX, centerY, rand = Math.random) {
-    const distFromCenter = Math.abs(pos.row) + Math.abs(pos.col);
-    const isEdge = distFromCenter >= halfSize * 0.7;
+  static computeDominoGridLayout(shortSide, holeRate, boardRect) {
+    const longSide = shortSide * (BLOCK_SIZES.LENGTH / BLOCK_SIZES.WIDTH);
+    const baseGap = Math.max(4, Math.round(shortSide * 0.35));
+    const cellGap = Math.max(baseGap, Math.round(longSide - 2 * shortSide));
+    const cellStep = shortSide + cellGap;
+    const step = cellStep / Math.SQRT2;
 
-    // 使用 row/col 来确定象限（45度网格中更准确）
-    const { row, col } = pos;
+    const dimsSample = this.getBlockDimensions(DIRECTIONS.UP, shortSide);
+    const halfW = dimsSample.width / 2;
+    const halfH = dimsSample.height / 2;
+    const safeBoardRect = this.getSafeBoardRect(boardRect, halfW, halfH);
+    const centerX = safeBoardRect.x + safeBoardRect.width / 2;
+    const centerY = safeBoardRect.y + safeBoardRect.height / 2;
 
-    // 边缘方块：80%概率朝外（按45度象限）
-    if (isEdge && rand() < 0.8) {
-      // 根据 row 和 col 的符号确定朝外方向
-      if (col >= 0 && row <= 0) return DIRECTIONS.UP;      // 右上象限 → NE
-      if (col >= 0 && row >= 0) return DIRECTIONS.RIGHT;   // 右下象限 → SE
-      if (col <= 0 && row >= 0) return DIRECTIONS.DOWN;    // 左下象限 → SW
-      return DIRECTIONS.LEFT;                               // 左上象限 → NW
+    const candidates = [];
+    if (safeBoardRect.width > 0 && safeBoardRect.height > 0) {
+      const maxRadius = Math.floor(Math.min(safeBoardRect.width, safeBoardRect.height) / (2 * step));
+      for (let row = -maxRadius; row <= maxRadius; row++) {
+        for (let col = -maxRadius; col <= maxRadius; col++) {
+          const x = centerX + (col - row) * step;
+          const y = centerY + (col + row) * step;
+
+          if (x < safeBoardRect.x ||
+              x > safeBoardRect.x + safeBoardRect.width ||
+              y < safeBoardRect.y ||
+              y > safeBoardRect.y + safeBoardRect.height) {
+            continue;
+          }
+
+          const dist = Math.abs(row) + Math.abs(col);
+          const key = `${row},${col}`;
+          candidates.push({ x, y, row, col, dist, key });
+        }
+      }
     }
 
-    // 内部方块：随机方向，但略微倾向于朝向边缘
-    const directions = [DIRECTIONS.UP, DIRECTIONS.RIGHT, DIRECTIONS.DOWN, DIRECTIONS.LEFT];
-    
-    if (rand() < 0.4) {
-      // 40%概率朝向边缘（按45度象限）
-      if (col >= 0 && row <= 0) return DIRECTIONS.UP;
-      if (col >= 0 && row >= 0) return DIRECTIONS.RIGHT;
-      if (col <= 0 && row >= 0) return DIRECTIONS.DOWN;
-      return DIRECTIONS.LEFT;
+    const maxBlocks = Math.floor((candidates.length * (1 - holeRate)) / 2);
+
+    return {
+      candidates,
+      maxBlocks,
+      cellGap,
+      cellStep,
+      step,
+      safeBoardRect,
+      centerX,
+      centerY
+    };
+  }
+
+  static getSafeBoardRect(boardRect, halfW, halfH) {
+    const renderMargin = BLOCK_SIZES.RENDER_MARGIN || 0;
+    const safeMarginX = BLOCK_SIZES.SAFETY_MARGIN + halfW + renderMargin;
+    const safeMarginY = BLOCK_SIZES.SAFETY_MARGIN + halfH + renderMargin;
+    return {
+      x: boardRect.x + safeMarginX,
+      y: boardRect.y + safeMarginY,
+      width: Math.max(0, boardRect.width - safeMarginX * 2),
+      height: Math.max(0, boardRect.height - safeMarginY * 2)
+    };
+  }
+
+  static orderCandidatesCenterOut(candidates, rand) {
+    const buckets = new Map();
+    candidates.forEach(pos => {
+      const key = pos.dist;
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push(pos);
+    });
+
+    const distances = Array.from(buckets.keys()).sort((a, b) => a - b);
+    const ordered = [];
+    distances.forEach(dist => {
+      const ring = buckets.get(dist);
+      this.shuffleArray(ring, rand);
+      ordered.push(...ring);
+    });
+
+    return ordered;
+  }
+
+  static pickHoleRate(params, rand) {
+    const range = params.holeRateRange || [0.12, 0.2];
+    const min = Math.min(range[0], range[1]);
+    const max = Math.max(range[0], range[1]);
+    const rate = min + (max - min) * rand();
+    return Math.max(0.05, Math.min(0.5, rate));
+  }
+
+  static selectSparseHoles(candidates, holeCount, rand) {
+    if (holeCount <= 0) return new Set();
+
+    const holes = new Set();
+    const blocked = new Set();
+    const shuffled = [...candidates];
+    this.shuffleArray(shuffled, rand);
+
+    for (const cell of shuffled) {
+      if (holes.size >= holeCount) break;
+      if (blocked.has(cell.key)) continue;
+      holes.add(cell.key);
+      const neighbors = this.getNeighborKeys(cell);
+      neighbors.forEach(key => blocked.add(key));
     }
 
-    return directions[Math.floor(rand() * 4)];
+    if (holes.size < holeCount) {
+      for (const cell of shuffled) {
+        if (holes.size >= holeCount) break;
+        if (holes.has(cell.key)) continue;
+        holes.add(cell.key);
+      }
+    }
+
+    return holes;
+  }
+
+  static getNeighborKeys(cell) {
+    return [
+      `${cell.row - 1},${cell.col}`,
+      `${cell.row + 1},${cell.col}`,
+      `${cell.row},${cell.col - 1}`,
+      `${cell.row},${cell.col + 1}`
+    ];
+  }
+
+  static getAvailableNeighbors(cell, cellMap, used) {
+    const neighbors = [];
+    const keys = this.getNeighborKeys(cell);
+    for (const key of keys) {
+      if (used.has(key)) continue;
+      const neighbor = cellMap.get(key);
+      if (neighbor) neighbors.push(neighbor);
+    }
+    return neighbors;
+  }
+
+  static pickDirectionForPair(cell, neighbor, blockCenterX, blockCenterY, centerX, centerY, rand) {
+    const dx = blockCenterX - centerX;
+    const dy = blockCenterY - centerY;
+    let preferred;
+
+    if (neighbor.col !== cell.col) {
+      // col+1 方向对应屏幕 SE，col-1 对应 NW
+      const score = dx + dy;
+      preferred = score >= 0 ? DIRECTIONS.RIGHT : DIRECTIONS.LEFT;
+    } else {
+      // row+1 方向对应屏幕 SW，row-1 对应 NE
+      const score = dx - dy;
+      preferred = score >= 0 ? DIRECTIONS.UP : DIRECTIONS.DOWN;
+    }
+
+    if (rand() < 0.2) return this.getOppositeDirection(preferred);
+    return preferred;
+  }
+
+  static getOppositeDirection(direction) {
+    switch (direction) {
+      case DIRECTIONS.UP:
+        return DIRECTIONS.DOWN;
+      case DIRECTIONS.DOWN:
+        return DIRECTIONS.UP;
+      case DIRECTIONS.LEFT:
+        return DIRECTIONS.RIGHT;
+      case DIRECTIONS.RIGHT:
+        return DIRECTIONS.LEFT;
+      default:
+        return DIRECTIONS.UP;
+    }
+  }
+
+  static isBlockInsideSafeRect(x, y, width, height, safeRect) {
+    return x >= safeRect.x &&
+      x + width <= safeRect.x + safeRect.width &&
+      y >= safeRect.y &&
+      y + height <= safeRect.y + safeRect.height;
+  }
+
+  static wouldOverlap(x, y, width, height, blocks, margin = 1) {
+    for (const b of blocks) {
+      if (x + margin < b.x + b.width - margin &&
+          x + width - margin > b.x + margin &&
+          y + margin < b.y + b.height - margin &&
+          y + height - margin > b.y + margin) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -280,7 +463,7 @@ export default class LevelGenerator {
     for (let fix = 0; fix < 5; fix++) {
       let removableCount = 0;
       blocks.forEach(block => {
-        if (!DirectionDetector.isBlocked(block, blocks, screenWidth, screenHeight)) {
+        if (!DirectionDetector.isBlocked(block, blocks, screenWidth, screenHeight, { debug: false })) {
           removableCount++;
         }
       });
@@ -324,90 +507,45 @@ export default class LevelGenerator {
     }
   }
 
-  /**
-   * 生成简单布局（后备方案）
-   */
-  static generateSimpleLayout(params, screenWidth, screenHeight, boardRect) {
-    const blocks = [];
-    const { blockCount, blockSize } = params;
-    const shortSide = blockSize || 20;  // 更小的默认尺寸
-    const dims = this.getBlockDimensions(DIRECTIONS.UP, shortSide);
-    const step = Math.max(dims.width, dims.height) + BLOCK_SIZES.SPACING + 2;
+  static hasSolvablePath(blocks, screenWidth, screenHeight, seed, attempts = 2) {
+    const total = blocks.length;
+    if (total === 0) return true;
 
-    const centerX = boardRect.x + boardRect.width / 2;
-    const centerY = boardRect.y + boardRect.height / 2;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const rand = this.createSeededRandom(seed + attempt * 97 + 11);
+      const working = blocks.map(block => ({
+        ...block,
+        isRemoved: false,
+        visible: true
+      }));
 
-    // 螺旋形布局
-    const spiralPositions = this.generateSpiralPositions(blockCount, step);
-
-    spiralPositions.forEach((pos, index) => {
-      const x = centerX + pos.dx;
-      const y = centerY + pos.dy;
-
-      // 外圈朝外（按45度象限）
-      let direction;
-      if (pos.dx >= 0 && pos.dy <= 0) direction = DIRECTIONS.UP;        // 右上 → NE
-      else if (pos.dx >= 0 && pos.dy >= 0) direction = DIRECTIONS.RIGHT; // 右下 → SE
-      else if (pos.dx <= 0 && pos.dy >= 0) direction = DIRECTIONS.DOWN;  // 左下 → SW
-      else direction = DIRECTIONS.LEFT;                                   // 左上 → NW
-
-      const { width: bw, height: bh } = this.getBlockDimensions(direction, shortSide);
-      const animalType = this.ANIMAL_TYPES[index % this.ANIMAL_TYPES.length];
-
-      blocks.push({
-        x: x - bw / 2,
-        y: y - bh / 2,
-        width: bw,
-        height: bh,
-        direction,
-        type: animalType,
-        size: shortSide
-      });
-    });
-
-    return { blocks, total: blocks.length };
-  }
-
-  /**
-   * 生成螺旋位置序列
-   */
-  static generateSpiralPositions(count, step) {
-    const positions = [{ dx: 0, dy: 0 }];
-    let x = 0, y = 0;
-    let dx = step, dy = 0;
-    let segmentLength = 1, segmentPassed = 0;
-    let direction = 0;
-
-    while (positions.length < count) {
-      x += dx;
-      y += dy;
-      positions.push({ dx: x, dy: y });
-      segmentPassed++;
-
-      if (segmentPassed === segmentLength) {
-        segmentPassed = 0;
-        direction = (direction + 1) % 4;
-        
-        switch (direction) {
-          case 0: dx = step; dy = 0; break;
-          case 1: dx = 0; dy = step; break;
-          case 2: dx = -step; dy = 0; break;
-          case 3: dx = 0; dy = -step; break;
+      let removed = 0;
+      while (removed < total) {
+        const removable = [];
+        for (const block of working) {
+          if (block.isRemoved) continue;
+          if (!DirectionDetector.isBlocked(block, working, screenWidth, screenHeight, { debug: false })) {
+            removable.push(block);
+          }
         }
 
-        if (direction % 2 === 0) {
-          segmentLength++;
-        }
+        if (removable.length === 0) break;
+
+        const pick = removable[Math.floor(rand() * removable.length)];
+        pick.isRemoved = true;
+        removed++;
       }
+
+      if (removed === total) return true;
     }
 
-    return positions;
+    return false;
   }
 
   /**
    * 验证关卡可解性
    */
-  static validateLevel(blocks, screenWidth, screenHeight) {
+  static validateLevel(blocks, screenWidth, screenHeight, seed) {
     // 检查重叠
     if (this.hasOverlap(blocks)) {
       console.log('[LevelGenerator] 验证失败：方块重叠');
@@ -424,16 +562,22 @@ export default class LevelGenerator {
     // 计算可消除方块数
     let removableCount = 0;
     for (const block of normalized) {
-      if (!DirectionDetector.isBlocked(block, normalized, screenWidth, screenHeight)) {
+      if (!DirectionDetector.isBlocked(block, normalized, screenWidth, screenHeight, { debug: false })) {
         removableCount++;
       }
     }
 
     const minRequired = Math.max(3, Math.floor(blocks.length * 0.1));
     const isValid = removableCount >= minRequired;
+    if (!isValid) {
+      console.log(`[LevelGenerator] 验证: 可消除 ${removableCount}/${blocks.length}, 最低要求 ${minRequired}, 结果: false`);
+      return false;
+    }
 
-    console.log(`[LevelGenerator] 验证: 可消除 ${removableCount}/${blocks.length}, 最低要求 ${minRequired}, 结果: ${isValid}`);
-    return isValid;
+    const baseSeed = typeof seed === 'number' ? seed : 0;
+    const solvable = this.hasSolvablePath(normalized, screenWidth, screenHeight, baseSeed);
+    console.log(`[LevelGenerator] 验证: 可消除 ${removableCount}/${blocks.length}, 最低要求 ${minRequired}, 可解: ${solvable}`);
+    return solvable;
   }
 
   /**
@@ -445,8 +589,8 @@ export default class LevelGenerator {
         const a = blocks[i];
         const b = blocks[j];
 
-        // AABB碰撞检测（允许轻微接触，避免误判导致反复重试）
-        const margin = 2;
+        // AABB碰撞检测（允许一定内缩，减少旋转AABB误判）
+        const margin = Math.max(1, BLOCK_SIZES.HITBOX_INSET || 0);
         if (a.x + margin < b.x + b.width - margin &&
             a.x + a.width - margin > b.x + margin &&
             a.y + margin < b.y + b.height - margin &&
@@ -459,41 +603,36 @@ export default class LevelGenerator {
   }
 
   /**
-   * 获取难度参数（优化版：使用更小的方块避免溢出）
+   * 获取难度参数（旋转网格 + 双格方块）
    */
   static getDifficultyParams(level) {
-    // 基础方块尺寸（修正：当前胶囊更长，如果仍用 24/26/28 会导致溢出）
-    const SMALL_BLOCK = 18;
-    const MEDIUM_BLOCK = 20;
-    const LARGE_BLOCK = 22;
+    const SMALL_BLOCK = 16;
+    const MEDIUM_BLOCK = 18;
+    const LARGE_BLOCK = 20;
 
     if (level <= 3) {
-      // 教学关：较少方块，让玩家熟悉
       return {
-        blockCount: 20 + level * 6,  // 26-38
+        blockCount: 48 + level * 6,  // 54-66
         blockSize: LARGE_BLOCK,
-        skipRate: 0.34               // 更稀疏（空一格更多）
+        holeRateRange: [0.12, 0.18]
       };
     } else if (level <= 10) {
-      // 简单关：中等数量
       return {
-        blockCount: 36 + (level - 3) * 5,  // 41-71
+        blockCount: 70 + (level - 3) * 6,  // 76-112
         blockSize: MEDIUM_BLOCK,
-        skipRate: 0.28
+        holeRateRange: [0.12, 0.18]
       };
     } else if (level <= 20) {
-      // 中等关：较多方块
       return {
-        blockCount: 60 + (level - 10) * 4,  // 64-100
+        blockCount: 100 + (level - 10) * 5,  // 105-150
         blockSize: SMALL_BLOCK,
-        skipRate: 0.22
+        holeRateRange: [0.1, 0.16]
       };
     } else {
-      // 困难关：大量方块
       return {
-        blockCount: Math.min(120, 90 + (level - 20) * 2),
+        blockCount: Math.min(175, 130 + (level - 20) * 4),
         blockSize: SMALL_BLOCK,
-        skipRate: 0.18
+        holeRateRange: [0.08, 0.12]
       };
     }
   }

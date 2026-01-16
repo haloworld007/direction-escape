@@ -3,6 +3,7 @@
  * 使用射线检测判断方块沿朝向是否被其他方块阻挡
  */
 import { DIRECTIONS } from '../blocks/Block';
+import { BLOCK_SIZES } from '../../ui/UIConstants';
 
 export default class DirectionDetector {
   /**
@@ -13,7 +14,8 @@ export default class DirectionDetector {
    * @param {number} screenHeight - 屏幕高度
    * @returns {boolean} true=被阻挡，false=可消除
    */
-  static isBlocked(block, allBlocks, screenWidth, screenHeight) {
+  static isBlocked(block, allBlocks, screenWidth, screenHeight, options = null) {
+    const debug = !options || options.debug !== false;
     // 1) 对角线方向向量（单位向量）
     const inv = 1 / Math.sqrt(2);
     const directionVectors = {
@@ -26,7 +28,9 @@ export default class DirectionDetector {
     const vector = directionVectors[block.direction];
     if (!vector) return true;
 
-    console.log(`[DirectionDetector] 开始检测: block=(${block.x}, ${block.y}), direction=${block.direction}, size=${block.width}x${block.height}`);
+    if (debug) {
+      console.log(`[DirectionDetector] 开始检测: block=(${block.x}, ${block.y}), direction=${block.direction}, size=${block.width}x${block.height}`);
+    }
 
     // 2. 从方块中心点开始检测
     const centerX = block.x + block.width / 2;
@@ -37,7 +41,9 @@ export default class DirectionDetector {
     const startX = centerX + vector.x * offset;
     const startY = centerY + vector.y * offset;
 
-    console.log(`[DirectionDetector] 起始点: (${startX}, ${startY}), 屏幕尺寸: ${screenWidth}x${screenHeight}`);
+    if (debug) {
+      console.log(`[DirectionDetector] 起始点: (${startX}, ${startY}), 屏幕尺寸: ${screenWidth}x${screenHeight}`);
+    }
 
     // 3. 定义检测步长（使用较小值确保不会跳过方块）
     const stepSize = 8; // 对角线射线更密一些
@@ -59,7 +65,9 @@ export default class DirectionDetector {
 
       // 检查是否到达屏幕边界
       if (this.isOutOfBounds(currentX, currentY, screenWidth, screenHeight)) {
-        console.log(`[DirectionDetector] 到达边界: (${currentX}, ${currentY}), 返回false（可消除）`);
+        if (debug) {
+          console.log(`[DirectionDetector] 到达边界: (${currentX}, ${currentY}), 返回false（可消除）`);
+        }
         return false; // 无阻挡，可消除
       }
 
@@ -67,18 +75,23 @@ export default class DirectionDetector {
       for (let other of allBlocks) {
         if (other === block) continue; // 跳过自己
         if (other.isRemoved) continue; // 跳过已消除的方块
-        if (!other.visible) continue; // 跳过不可见的方块
+        if (other.visible === false) continue; // 跳过不可见的方块
 
+        const hitRect = this.getHitRect(other);
         // 对角线：射线点只要进入其他方块 AABB 即视为阻挡
-        if (this.pointInRect(currentX, currentY, other)) {
-          console.log(`[DirectionDetector] 检测到碰撞! 检测点(${currentX}, ${currentY}), 其他方块: (${other.x}, ${other.y})`);
+        if (this.pointInRect(currentX, currentY, hitRect)) {
+          if (debug) {
+            console.log(`[DirectionDetector] 检测到碰撞! 检测点(${currentX}, ${currentY}), 其他方块: (${other.x}, ${other.y})`);
+          }
           return true; // 被阻挡
         }
       }
     }
 
     // 超过最大步数，视为被阻挡
-    console.log(`[DirectionDetector] 超过最大步数，返回true（被阻挡）`);
+    if (debug) {
+      console.log(`[DirectionDetector] 超过最大步数，返回true（被阻挡）`);
+    }
     return true;
   }
 
@@ -106,6 +119,18 @@ export default class DirectionDetector {
   static pointInRect(x, y, rect) {
     return x >= rect.x && x <= rect.x + rect.width &&
            y >= rect.y && y <= rect.y + rect.height;
+  }
+
+  static getHitRect(block) {
+    const inset = BLOCK_SIZES.HITBOX_INSET || 0;
+    const width = Math.max(0, block.width - inset * 2);
+    const height = Math.max(0, block.height - inset * 2);
+    return {
+      x: block.x + inset,
+      y: block.y + inset,
+      width,
+      height
+    };
   }
 
   /**
