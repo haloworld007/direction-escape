@@ -145,6 +145,7 @@ export default class LevelGenerator {
       if (neighbors.length === 0) continue;
 
       const neighbor = neighbors[Math.floor(rand() * neighbors.length)];
+      const axis = neighbor.col !== cell.col ? 'col' : 'row';
       const blockCenterX = (cell.x + neighbor.x) / 2;
       const blockCenterY = (cell.y + neighbor.y) / 2;
       const direction = this.pickDirectionForPair(
@@ -176,6 +177,7 @@ export default class LevelGenerator {
         width: bw,
         height: bh,
         direction,
+        axis,
         type: animalType,
         size: shortSide
       });
@@ -197,6 +199,7 @@ export default class LevelGenerator {
         if (neighbors.length === 0) continue;
 
         const neighbor = neighbors[Math.floor(rand() * neighbors.length)];
+        const axis = neighbor.col !== cell.col ? 'col' : 'row';
         const blockCenterX = (cell.x + neighbor.x) / 2;
         const blockCenterY = (cell.y + neighbor.y) / 2;
         const direction = this.pickDirectionForPair(
@@ -227,6 +230,7 @@ export default class LevelGenerator {
           width: bw,
           height: bh,
           direction,
+          axis,
           type: animalType,
           size: shortSide
         });
@@ -238,6 +242,7 @@ export default class LevelGenerator {
     }
 
     this.ensureRemovableBlocks(blocks, screenWidth, screenHeight, centerX, centerY, shortSide);
+    this.ensureSolvablePath(blocks, screenWidth, screenHeight, centerX, centerY, shortSide, seed);
 
     return blocks;
   }
@@ -416,7 +421,86 @@ export default class LevelGenerator {
       preferred = score >= 0 ? DIRECTIONS.UP : DIRECTIONS.DOWN;
     }
 
-    if (rand() < 0.2) return this.getOppositeDirection(preferred);
+    if (rand() < 0.12) return this.getOppositeDirection(preferred);
+    return preferred;
+  }
+
+  static getAxisDirections(block) {
+    if (block.axis === 'row') {
+      return [DIRECTIONS.UP, DIRECTIONS.DOWN];
+    }
+    if (block.axis === 'col') {
+      return [DIRECTIONS.LEFT, DIRECTIONS.RIGHT];
+    }
+    return [DIRECTIONS.UP, DIRECTIONS.RIGHT, DIRECTIONS.DOWN, DIRECTIONS.LEFT];
+  }
+
+  static pickOutwardDirectionForAxis(block, centerX, centerY) {
+    const cx = block.x + block.width / 2;
+    const cy = block.y + block.height / 2;
+    const dx = cx - centerX;
+    const dy = cy - centerY;
+
+    if (block.axis === 'col') {
+      return (dx + dy) >= 0 ? DIRECTIONS.RIGHT : DIRECTIONS.LEFT;
+    }
+    if (block.axis === 'row') {
+      return (dx - dy) >= 0 ? DIRECTIONS.UP : DIRECTIONS.DOWN;
+    }
+
+    if (dx >= 0 && dy <= 0) return DIRECTIONS.UP;
+    if (dx >= 0 && dy >= 0) return DIRECTIONS.RIGHT;
+    if (dx <= 0 && dy >= 0) return DIRECTIONS.DOWN;
+    return DIRECTIONS.LEFT;
+  }
+
+  static setBlockDirection(block, direction, shortSide) {
+    const { width: bw, height: bh } = this.getBlockDimensions(direction, shortSide);
+    const cx = block.x + block.width / 2;
+    const cy = block.y + block.height / 2;
+    block.direction = direction;
+    block.width = bw;
+    block.height = bh;
+    block.x = cx - bw / 2;
+    block.y = cy - bh / 2;
+  }
+
+  static wouldBeBlockedWithDirection(block, direction, shortSide, blocks, screenWidth, screenHeight) {
+    const { width: bw, height: bh } = this.getBlockDimensions(direction, shortSide);
+    const cx = block.x + block.width / 2;
+    const cy = block.y + block.height / 2;
+    const temp = {
+      ...block,
+      direction,
+      width: bw,
+      height: bh,
+      x: cx - bw / 2,
+      y: cy - bh / 2,
+      isRemoved: false,
+      visible: true
+    };
+    const tempBlocks = blocks.map(b => (b === block ? temp : b));
+    return DirectionDetector.isBlocked(temp, tempBlocks, screenWidth, screenHeight, { debug: false });
+  }
+
+  static pickUnblockedDirection(block, blocks, screenWidth, screenHeight, centerX, centerY, shortSide) {
+    const preferred = this.pickOutwardDirectionForAxis(block, centerX, centerY);
+    const alternate = this.getOppositeDirection(preferred);
+    const candidates = [preferred, alternate];
+
+    for (const dir of candidates) {
+      if (!this.wouldBeBlockedWithDirection(block, dir, shortSide, blocks, screenWidth, screenHeight)) {
+        return dir;
+      }
+    }
+
+    const axisDirs = this.getAxisDirections(block);
+    for (const dir of axisDirs) {
+      if (!this.wouldBeBlockedWithDirection(block, dir, shortSide, blocks, screenWidth, screenHeight)) {
+        return dir;
+      }
+    }
+
     return preferred;
   }
 
@@ -458,7 +542,7 @@ export default class LevelGenerator {
    * 确保有足够的可消除方块
    */
   static ensureRemovableBlocks(blocks, screenWidth, screenHeight, centerX, centerY, shortSide) {
-    const minRemovable = Math.max(5, Math.floor(blocks.length * 0.15));
+    const minRemovable = Math.max(8, Math.floor(blocks.length * 0.2));
 
     for (let fix = 0; fix < 5; fix++) {
       let removableCount = 0;
@@ -473,41 +557,85 @@ export default class LevelGenerator {
         return;
       }
 
-      // 修正：将最外层的方块朝向调整为朝外
-      const scored = blocks.map((b, idx) => {
-        const cx = b.x + b.width / 2;
-        const cy = b.y + b.height / 2;
-        const dx = cx - centerX;
-        const dy = cy - centerY;
-        const dist = Math.abs(dx) + Math.abs(dy);
-        return { idx, dx, dy, dist };
-      }).sort((a, b) => b.dist - a.dist);
+      const adjusted = this.relaxBlockedDirections(
+        blocks,
+        screenWidth,
+        screenHeight,
+        centerX,
+        centerY,
+        shortSide,
+        Math.ceil(blocks.length * 0.25)
+      );
 
-      // 调整最外层10%的方块朝向（按45度象限朝外）
-      const adjustCount = Math.ceil(blocks.length * 0.1);
-      for (let i = 0; i < adjustCount && i < scored.length; i++) {
-        const s = scored[i];
-        const block = blocks[s.idx];
-        
-        // 45度象限方向分配
-        if (s.dx >= 0 && s.dy <= 0) block.direction = DIRECTIONS.UP;      // 右上 → NE
-        else if (s.dx >= 0 && s.dy >= 0) block.direction = DIRECTIONS.RIGHT; // 右下 → SE
-        else if (s.dx <= 0 && s.dy >= 0) block.direction = DIRECTIONS.DOWN;  // 左下 → SW
-        else block.direction = DIRECTIONS.LEFT;                              // 左上 → NW
-
-        // 更新方块尺寸
-        const { width: bw, height: bh } = this.getBlockDimensions(block.direction, shortSide);
-        const cx = block.x + block.width / 2;
-        const cy = block.y + block.height / 2;
-        block.width = bw;
-        block.height = bh;
-        block.x = cx - bw / 2;
-        block.y = cy - bh / 2;
+      if (!adjusted) {
+        break;
       }
     }
   }
 
-  static hasSolvablePath(blocks, screenWidth, screenHeight, seed, attempts = 2) {
+  static relaxBlockedDirections(blocks, screenWidth, screenHeight, centerX, centerY, shortSide, limit) {
+    const blocked = [];
+
+    blocks.forEach((block, idx) => {
+      if (!DirectionDetector.isBlocked(block, blocks, screenWidth, screenHeight, { debug: false })) return;
+      const cx = block.x + block.width / 2;
+      const cy = block.y + block.height / 2;
+      const dx = cx - centerX;
+      const dy = cy - centerY;
+      const dist = Math.abs(dx) + Math.abs(dy);
+      blocked.push({ idx, dist });
+    });
+
+    if (blocked.length === 0) return false;
+
+    blocked.sort((a, b) => b.dist - a.dist);
+    let changed = false;
+    const adjustCount = Math.min(limit, blocked.length);
+    for (let i = 0; i < adjustCount; i++) {
+      const block = blocks[blocked[i].idx];
+      const nextDirection = this.pickUnblockedDirection(
+        block,
+        blocks,
+        screenWidth,
+        screenHeight,
+        centerX,
+        centerY,
+        shortSide
+      );
+      if (nextDirection !== block.direction) {
+        this.setBlockDirection(block, nextDirection, shortSide);
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
+  static ensureSolvablePath(blocks, screenWidth, screenHeight, centerX, centerY, shortSide, seed) {
+    const baseSeed = typeof seed === 'number' ? seed : 0;
+    const maxFixRounds = 4;
+    const attempts = 6;
+
+    for (let round = 0; round < maxFixRounds; round++) {
+      if (this.hasSolvablePath(blocks, screenWidth, screenHeight, baseSeed + round * 131, attempts)) {
+        return true;
+      }
+      const adjusted = this.relaxBlockedDirections(
+        blocks,
+        screenWidth,
+        screenHeight,
+        centerX,
+        centerY,
+        shortSide,
+        Math.ceil(blocks.length * 0.2)
+      );
+      if (!adjusted) break;
+    }
+
+    return this.hasSolvablePath(blocks, screenWidth, screenHeight, baseSeed + 777, attempts + 2);
+  }
+
+  static hasSolvablePath(blocks, screenWidth, screenHeight, seed, attempts = 6) {
     const total = blocks.length;
     if (total === 0) return true;
 
@@ -567,7 +695,7 @@ export default class LevelGenerator {
       }
     }
 
-    const minRequired = Math.max(3, Math.floor(blocks.length * 0.1));
+    const minRequired = Math.max(6, Math.floor(blocks.length * 0.15));
     const isValid = removableCount >= minRequired;
     if (!isValid) {
       console.log(`[LevelGenerator] 验证: 可消除 ${removableCount}/${blocks.length}, 最低要求 ${minRequired}, 结果: false`);
@@ -575,7 +703,7 @@ export default class LevelGenerator {
     }
 
     const baseSeed = typeof seed === 'number' ? seed : 0;
-    const solvable = this.hasSolvablePath(normalized, screenWidth, screenHeight, baseSeed);
+    const solvable = this.hasSolvablePath(normalized, screenWidth, screenHeight, baseSeed, 8);
     console.log(`[LevelGenerator] 验证: 可消除 ${removableCount}/${blocks.length}, 最低要求 ${minRequired}, 可解: ${solvable}`);
     return solvable;
   }
