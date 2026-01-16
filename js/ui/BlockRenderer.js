@@ -1,16 +1,14 @@
 /**
- * 动物方块渲染器（PRD v1.3 更新版）
- * 根据参考截图设计：
- * - 胶囊状/长条形造型
- * - 主要3种动物：猪（粉色）、羊（白色）、狗（橙黄色）
- * - 有明显的动物头尾区分
+ * 动物方块渲染器（圆润胶囊风格 2.5:1 版本）
+ * 设计特点：
+ * - 圆润的胶囊状身体（长宽比 2.5:1）
+ * - 简洁的头部特征：眼睛 + 鼻子 + 小耳朵
+ * - 5种主要动物：猪（粉色）、羊（白色）、狗（橙黄色）、狐狸（橙红色）、熊猫（黑白）
+ * - Q萌可爱的整体造型
  */
 
 import { DIRECTIONS } from "../game/blocks/Block";
-import {
-  ANIMAL_TYPES,
-  getAnimalColor,
-} from "./UIConstants";
+import { ANIMAL_TYPES, getAnimalColor } from "./UIConstants";
 
 export default class BlockRenderer {
   /**
@@ -26,7 +24,7 @@ export default class BlockRenderer {
 
     ctx.save();
 
-    // 以碰撞盒中心为原点，旋转绘制“胶囊本体45°”
+    // 以碰撞盒中心为原点，旋转绘制"胶囊本体45°"
     const centerX = x + width / 2;
     const centerY = y + height / 2;
     const bodyW = block.bodyWidth || Math.max(width, height);
@@ -52,13 +50,13 @@ export default class BlockRenderer {
   }
 
   /**
-   * 绘制动物身体（胶囊状）- 效果图风格
+   * 绘制动物身体（圆润胶囊状）- Q萌风格
    */
   static drawAnimalBody(ctx, x, y, width, height, direction, animalType) {
     const color = getAnimalColor(animalType);
 
-    // 阴影效果（更强烈）
-    ctx.shadowColor = "rgba(0, 0, 0, 0.4)";
+    // 阴影效果
+    ctx.shadowColor = "rgba(0, 0, 0, 0.3)";
     ctx.shadowBlur = 6;
     ctx.shadowOffsetX = 2;
     ctx.shadowOffsetY = 3;
@@ -66,13 +64,13 @@ export default class BlockRenderer {
     // 身体渐变（沿长轴）
     const gradient = ctx.createLinearGradient(x, y, x + width, y);
     gradient.addColorStop(0, this.lightenColor(color, 20));
-    gradient.addColorStop(0.45, color);
-    gradient.addColorStop(1, this.darkenColor(color, 18));
+    gradient.addColorStop(0.5, color);
+    gradient.addColorStop(1, this.darkenColor(color, 15));
 
     ctx.fillStyle = gradient;
 
-    // 绘制流线型身体
-    this.drawTaperedBodyPath(ctx, x, y, width, height);
+    // 绘制圆润胶囊身体
+    this.drawCapsulePath(ctx, x, y, width, height);
     ctx.fill();
 
     // 清除阴影
@@ -81,10 +79,10 @@ export default class BlockRenderer {
     ctx.shadowOffsetX = 0;
     ctx.shadowOffsetY = 0;
 
-    // 明显的深色边框（效果图风格）
-    ctx.strokeStyle = this.darkenColor(color, 45);
-    ctx.lineWidth = 2;
-    this.drawTaperedBodyPath(ctx, x, y, width, height);
+    // 柔和边框
+    ctx.strokeStyle = this.darkenColor(color, 30);
+    ctx.lineWidth = 1.5;
+    this.drawCapsulePath(ctx, x, y, width, height);
     ctx.stroke();
 
     // 顶部高光
@@ -92,33 +90,15 @@ export default class BlockRenderer {
       x,
       y,
       x,
-      y + height * 0.5
+      y + height * 0.4
     );
-    highlightGradient.addColorStop(0, "rgba(255, 255, 255, 0.4)");
+    highlightGradient.addColorStop(0, "rgba(255, 255, 255, 0.45)");
     highlightGradient.addColorStop(1, "rgba(255, 255, 255, 0)");
     ctx.save();
-    this.drawTaperedBodyPath(ctx, x, y, width, height);
+    this.drawCapsulePath(ctx, x, y, width, height);
     ctx.clip();
     ctx.fillStyle = highlightGradient;
-    ctx.fillRect(x, y, width, height * 0.5);
-    ctx.restore();
-
-    // 轻微头部阴影，强调头部但不割裂
-    ctx.save();
-    this.drawTaperedBodyPath(ctx, x, y, width, height);
-    ctx.clip();
-    const headGlow = ctx.createRadialGradient(
-      x + width * 0.82,
-      y + height * 0.5,
-      height * 0.08,
-      x + width * 0.82,
-      y + height * 0.5,
-      height * 0.55
-    );
-    headGlow.addColorStop(0, 'rgba(0, 0, 0, 0.08)');
-    headGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
-    ctx.fillStyle = headGlow;
-    ctx.fillRect(x, y, width, height);
+    ctx.fillRect(x, y, width, height * 0.45);
     ctx.restore();
 
     // 绘制动物特征
@@ -126,47 +106,26 @@ export default class BlockRenderer {
   }
 
   /**
-   * 绘制流线型身体路径（尾部略窄、腹部更宽）
+   * 绘制圆润胶囊路径（2.5:1 比例优化）
    */
-  static drawTaperedBodyPath(ctx, x, y, width, height) {
+  static drawCapsulePath(ctx, x, y, width, height) {
     const centerY = y + height / 2;
-    const maxRadius = height / 2;
-    let tailRadius = height * 0.46;
-    let headRadius = height * 0.34;
-    const minGap = Math.max(4, width * 0.06);
-    if (tailRadius + headRadius + minGap > width) {
-      const scale = (width - minGap) / (tailRadius + headRadius);
-      tailRadius *= scale;
-      headRadius *= scale;
-    }
-    tailRadius = Math.min(maxRadius, tailRadius);
-    headRadius = Math.min(maxRadius, headRadius);
+    const radius = height / 2;
 
-    const tailCenterX = x + tailRadius;
-    const headCenterX = x + width - headRadius;
-    const c1x = x + width * 0.35;
-    const c2x = x + width * 0.7;
+    // 左右两端使用相同的圆角半径，形成标准胶囊形
+    const leftCenterX = x + radius;
+    const rightCenterX = x + width - radius;
 
     ctx.beginPath();
-    ctx.moveTo(tailCenterX, centerY - tailRadius);
-    ctx.bezierCurveTo(
-      c1x,
-      centerY - tailRadius,
-      c2x,
-      centerY - headRadius,
-      headCenterX,
-      centerY - headRadius
-    );
-    ctx.arc(headCenterX, centerY, headRadius, -Math.PI / 2, Math.PI / 2, false);
-    ctx.bezierCurveTo(
-      c2x,
-      centerY + headRadius,
-      c1x,
-      centerY + tailRadius,
-      tailCenterX,
-      centerY + tailRadius
-    );
-    ctx.arc(tailCenterX, centerY, tailRadius, Math.PI / 2, -Math.PI / 2, false);
+    // 顶部直线
+    ctx.moveTo(leftCenterX, y);
+    ctx.lineTo(rightCenterX, y);
+    // 右端圆弧（头部）
+    ctx.arc(rightCenterX, centerY, radius, -Math.PI / 2, Math.PI / 2, false);
+    // 底部直线
+    ctx.lineTo(leftCenterX, y + height);
+    // 左端圆弧（尾部）
+    ctx.arc(leftCenterX, centerY, radius, Math.PI / 2, -Math.PI / 2, false);
     ctx.closePath();
   }
 
@@ -176,7 +135,6 @@ export default class BlockRenderer {
   static drawAnimalFeatures(ctx, x, y, width, height, direction, animalType) {
     ctx.save();
 
-    // 已在 render() 里整体 rotate 过（对角线方向），这里不再按方向旋转
     const centerX = x + width / 2;
     const centerY = y + height / 2;
     ctx.translate(centerX, centerY);
@@ -214,275 +172,366 @@ export default class BlockRenderer {
   }
 
   /**
-   * 绘制猪特征（粉色）
+   * 绘制猪特征（粉色）- 简洁版
+   * 眼睛 + 椭圆粉鼻+鼻孔 + 小三角耳 + 卷尾
    */
   static drawPigFeatures(ctx, bodyLength, bodyWidth) {
-    const headX = bodyLength / 2 - 8;
-    const tailX = -bodyLength / 2 + 6;
+    const headX = bodyLength / 2 - bodyWidth * 0.35;
+    const tailX = -bodyLength / 2 + bodyWidth * 0.25;
+    const s = bodyWidth / 18; // 缩放因子
 
-    // 猪鼻子
-    ctx.fillStyle = "#FF69B4";
+    // 小三角耳朵
+    ctx.fillStyle = "#FFB6C1";
     ctx.beginPath();
-    ctx.ellipse(headX, 0, 6, 4, 0, 0, Math.PI * 2);
+    ctx.moveTo(headX - 4 * s, -bodyWidth * 0.3);
+    ctx.lineTo(headX - 8 * s, -bodyWidth * 0.55);
+    ctx.lineTo(headX - 1 * s, -bodyWidth * 0.35);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(headX - 4 * s, bodyWidth * 0.3);
+    ctx.lineTo(headX - 8 * s, bodyWidth * 0.55);
+    ctx.lineTo(headX - 1 * s, bodyWidth * 0.35);
+    ctx.closePath();
     ctx.fill();
 
+    // 眼睛
+    const eyeX = headX - 3 * s;
+    const eyeY = bodyWidth * 0.15;
+    ctx.fillStyle = "#333";
+    ctx.beginPath();
+    ctx.arc(eyeX, -eyeY, 2.5 * s, 0, Math.PI * 2);
+    ctx.arc(eyeX, eyeY, 2.5 * s, 0, Math.PI * 2);
+    ctx.fill();
+    // 眼睛高光
+    ctx.fillStyle = "#FFF";
+    ctx.beginPath();
+    ctx.arc(eyeX - 0.8 * s, -eyeY - 0.8 * s, 1 * s, 0, Math.PI * 2);
+    ctx.arc(eyeX - 0.8 * s, eyeY - 0.8 * s, 1 * s, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 椭圆粉鼻子
+    ctx.fillStyle = "#FF69B4";
+    ctx.beginPath();
+    ctx.ellipse(headX + 3 * s, 0, 4 * s, 3 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
     // 鼻孔
     ctx.fillStyle = "#C71585";
     ctx.beginPath();
-    ctx.arc(headX, -2, 1.5, 0, Math.PI * 2);
-    ctx.arc(headX, 2, 1.5, 0, Math.PI * 2);
+    ctx.arc(headX + 3 * s, -1.2 * s, 1 * s, 0, Math.PI * 2);
+    ctx.arc(headX + 3 * s, 1.2 * s, 1 * s, 0, Math.PI * 2);
     ctx.fill();
 
-    // 眼睛
-    ctx.fillStyle = "#333";
-    ctx.beginPath();
-    ctx.arc(headX - 8, -bodyWidth * 0.15, 2.5, 0, Math.PI * 2);
-    ctx.arc(headX - 8, bodyWidth * 0.15, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 眼睛高光
-    ctx.fillStyle = "#FFF";
-    ctx.beginPath();
-    ctx.arc(headX - 9, -bodyWidth * 0.15 - 1, 1, 0, Math.PI * 2);
-    ctx.arc(headX - 9, bodyWidth * 0.15 - 1, 1, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 耳朵
-    ctx.fillStyle = "#FFB6C1";
-    ctx.beginPath();
-    ctx.ellipse(headX - 12, -bodyWidth * 0.35, 5, 7, -0.3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(headX - 12, bodyWidth * 0.35, 5, 7, 0.3, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 猪尾巴（卷曲）
+    // 卷尾
     ctx.strokeStyle = "#FFB6C1";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(tailX, 0);
-    ctx.bezierCurveTo(tailX - 5, -3, tailX - 8, 3, tailX - 6, -5);
-    ctx.stroke();
-  }
-
-  /**
-   * 绘制狐狸特征（橙色）
-   */
-  static drawFoxFeatures(ctx, bodyLength, bodyWidth) {
-    const headX = bodyLength / 2 - 8;
-    const tailX = -bodyLength / 2 + 6;
-
-    // 耳朵
-    ctx.fillStyle = "#F57C00";
-    ctx.beginPath();
-    ctx.ellipse(headX - 10, -bodyWidth * 0.35, 5, 7, -0.4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(headX - 10, bodyWidth * 0.35, 5, 7, 0.4, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 口鼻
-    ctx.fillStyle = "#FFF3E0";
-    ctx.beginPath();
-    ctx.ellipse(headX + 1, 0, 6.2, 4.2, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 眼睛
-    ctx.fillStyle = "#3E2723";
-    ctx.beginPath();
-    ctx.arc(headX - 7, -bodyWidth * 0.12, 2.2, 0, Math.PI * 2);
-    ctx.arc(headX - 7, bodyWidth * 0.12, 2.2, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 尾巴末端白
-    ctx.fillStyle = "#FFF3E0";
-    ctx.beginPath();
-    ctx.ellipse(tailX - 4, 0, 4.5, 3.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  /**
-   * 绘制熊猫特征（黑白）
-   */
-  static drawPandaFeatures(ctx, bodyLength, bodyWidth) {
-    const headX = bodyLength / 2 - 8;
-    const tailX = -bodyLength / 2 + 6;
-
-    // 白色面部
-    ctx.fillStyle = "#F5F5F5";
-    ctx.beginPath();
-    ctx.ellipse(headX - 1, 0, 7.2, 5.2, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 耳朵
-    ctx.fillStyle = "#212121";
-    ctx.beginPath();
-    ctx.ellipse(headX - 11, -bodyWidth * 0.36, 4.8, 6.2, -0.3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(headX - 11, bodyWidth * 0.36, 4.8, 6.2, 0.3, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 眼圈
-    ctx.fillStyle = "#1F1F1F";
-    ctx.beginPath();
-    ctx.ellipse(headX - 7, -bodyWidth * 0.15, 4, 3, 0.1, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(headX - 7, bodyWidth * 0.15, 4, 3, -0.1, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 眼睛
-    ctx.fillStyle = "#111";
-    ctx.beginPath();
-    ctx.arc(headX - 7, -bodyWidth * 0.15, 1.6, 0, Math.PI * 2);
-    ctx.arc(headX - 7, bodyWidth * 0.15, 1.6, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 小尾巴
-    ctx.fillStyle = "#212121";
-    ctx.beginPath();
-    ctx.ellipse(tailX, 0, 3, 3, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  /**
-   * 绘制羊特征（白色）
-   */
-  static drawSheepFeatures(ctx, bodyLength, bodyWidth) {
-    const headX = bodyLength / 2 - 6;
-    const tailX = -bodyLength / 2 + 5;
-
-    // 羊头（深色）
-    ctx.fillStyle = "#666";
-    ctx.beginPath();
-    ctx.ellipse(headX, 0, 7, bodyWidth * 0.35, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 眼睛
-    ctx.fillStyle = "#333";
-    ctx.beginPath();
-    ctx.arc(headX + 2, -bodyWidth * 0.12, 2, 0, Math.PI * 2);
-    ctx.arc(headX + 2, bodyWidth * 0.12, 2, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 眼睛高光
-    ctx.fillStyle = "#FFF";
-    ctx.beginPath();
-    ctx.arc(headX + 1, -bodyWidth * 0.12 - 0.5, 0.8, 0, Math.PI * 2);
-    ctx.arc(headX + 1, bodyWidth * 0.12 - 0.5, 0.8, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 羊耳朵
-    ctx.fillStyle = "#555";
-    ctx.beginPath();
-    ctx.ellipse(headX - 5, -bodyWidth * 0.4, 4, 6, -0.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(headX - 5, bodyWidth * 0.4, 4, 6, 0.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 羊毛纹理（身体上的小圆）
-    ctx.fillStyle = "rgba(200, 200, 200, 0.5)";
-    for (let i = 0; i < 5; i++) {
-      const wx = -bodyLength * 0.3 + i * 8;
-      ctx.beginPath();
-      ctx.arc(wx, ((i % 2) - 0.5) * 6, 4, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // 尾巴
-    ctx.fillStyle = "#FFF";
-    ctx.beginPath();
-    ctx.arc(tailX, 0, 4, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  /**
-   * 绘制狗特征（橙黄色）
-   */
-  static drawDogFeatures(ctx, bodyLength, bodyWidth) {
-    const headX = bodyLength / 2 - 6;
-    const tailX = -bodyLength / 2 + 5;
-
-    // 狗头（圆形）
-    ctx.fillStyle = "rgba(0, 0, 0, 0.15)";
-    ctx.beginPath();
-    ctx.arc(headX, 0, bodyWidth * 0.35, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 鼻子
-    ctx.fillStyle = "#333";
-    ctx.beginPath();
-    ctx.ellipse(headX + 5, 0, 3, 2.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 眼睛
-    ctx.fillStyle = "#333";
-    ctx.beginPath();
-    ctx.arc(headX - 2, -bodyWidth * 0.15, 2.5, 0, Math.PI * 2);
-    ctx.arc(headX - 2, bodyWidth * 0.15, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 眼睛高光
-    ctx.fillStyle = "#FFF";
-    ctx.beginPath();
-    ctx.arc(headX - 3, -bodyWidth * 0.15 - 1, 1, 0, Math.PI * 2);
-    ctx.arc(headX - 3, bodyWidth * 0.15 - 1, 1, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 狗耳朵（垂耳）
-    ctx.fillStyle = "#D2691E";
-    ctx.beginPath();
-    ctx.ellipse(headX - 8, -bodyWidth * 0.4, 4, 8, -0.2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(headX - 8, bodyWidth * 0.4, 4, 8, 0.2, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 尾巴
-    ctx.strokeStyle = "#D2691E";
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 2 * s;
     ctx.lineCap = "round";
     ctx.beginPath();
     ctx.moveTo(tailX, 0);
-    ctx.quadraticCurveTo(tailX - 8, -6, tailX - 5, -10);
+    ctx.bezierCurveTo(
+      tailX - 4 * s,
+      -2 * s,
+      tailX - 6 * s,
+      2 * s,
+      tailX - 4 * s,
+      -4 * s
+    );
     ctx.stroke();
+  }
+
+  /**
+   * 绘制羊特征（白色）- 简洁版
+   * 眼睛 + 小黑鼻 + 小垂耳 + 绒球尾
+   */
+  static drawSheepFeatures(ctx, bodyLength, bodyWidth) {
+    const headX = bodyLength / 2 - bodyWidth * 0.35;
+    const tailX = -bodyLength / 2 + bodyWidth * 0.25;
+    const s = bodyWidth / 18;
+
+    // 小垂耳
+    ctx.fillStyle = "#888";
+    ctx.beginPath();
+    ctx.ellipse(
+      headX - 4 * s,
+      -bodyWidth * 0.35,
+      2.5 * s,
+      4 * s,
+      -0.5,
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(
+      headX - 4 * s,
+      bodyWidth * 0.35,
+      2.5 * s,
+      4 * s,
+      0.5,
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+
+    // 眼睛
+    const eyeX = headX - 1 * s;
+    const eyeY = bodyWidth * 0.12;
+    ctx.fillStyle = "#333";
+    ctx.beginPath();
+    ctx.arc(eyeX, -eyeY, 2.2 * s, 0, Math.PI * 2);
+    ctx.arc(eyeX, eyeY, 2.2 * s, 0, Math.PI * 2);
+    ctx.fill();
+    // 眼睛高光
+    ctx.fillStyle = "#FFF";
+    ctx.beginPath();
+    ctx.arc(eyeX - 0.6 * s, -eyeY - 0.6 * s, 0.9 * s, 0, Math.PI * 2);
+    ctx.arc(eyeX - 0.6 * s, eyeY - 0.6 * s, 0.9 * s, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 小黑鼻
+    ctx.fillStyle = "#444";
+    ctx.beginPath();
+    ctx.ellipse(headX + 4 * s, 0, 2 * s, 1.5 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 绒球尾巴
+    ctx.fillStyle = "#F5F5F5";
+    ctx.beginPath();
+    ctx.arc(tailX, 0, 3.5 * s, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#DDD";
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+  }
+
+  /**
+   * 绘制狗特征（橙黄色）- 简洁版
+   * 眼睛 + 黑鼻头 + 小垂耳 + 翘尾
+   */
+  static drawDogFeatures(ctx, bodyLength, bodyWidth) {
+    const headX = bodyLength / 2 - bodyWidth * 0.35;
+    const tailX = -bodyLength / 2 + bodyWidth * 0.25;
+    const s = bodyWidth / 18;
+
+    // 小垂耳
+    ctx.fillStyle = "#C97C3C";
+    ctx.beginPath();
+    ctx.ellipse(
+      headX - 4 * s,
+      -bodyWidth * 0.35,
+      3 * s,
+      5 * s,
+      -0.15,
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(
+      headX - 4 * s,
+      bodyWidth * 0.35,
+      3 * s,
+      5 * s,
+      0.15,
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+
+    // 眼睛
+    const eyeX = headX - 1 * s;
+    const eyeY = bodyWidth * 0.14;
+    ctx.fillStyle = "#333";
+    ctx.beginPath();
+    ctx.arc(eyeX, -eyeY, 2.5 * s, 0, Math.PI * 2);
+    ctx.arc(eyeX, eyeY, 2.5 * s, 0, Math.PI * 2);
+    ctx.fill();
+    // 眼睛高光
+    ctx.fillStyle = "#FFF";
+    ctx.beginPath();
+    ctx.arc(eyeX - 0.7 * s, -eyeY - 0.7 * s, 1 * s, 0, Math.PI * 2);
+    ctx.arc(eyeX - 0.7 * s, eyeY - 0.7 * s, 1 * s, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 黑鼻头
+    ctx.fillStyle = "#222";
+    ctx.beginPath();
+    ctx.ellipse(headX + 4 * s, 0, 2.5 * s, 2 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 翘尾
+    ctx.strokeStyle = "#C97C3C";
+    ctx.lineWidth = 3 * s;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(tailX, 0);
+    ctx.quadraticCurveTo(tailX - 5 * s, -4 * s, tailX - 3 * s, -7 * s);
+    ctx.stroke();
+  }
+
+  /**
+   * 绘制狐狸特征（橙红色）- 简洁版
+   * 眼睛 + 黑鼻尖 + 小尖耳 + 白尖尾
+   */
+  static drawFoxFeatures(ctx, bodyLength, bodyWidth) {
+    const headX = bodyLength / 2 - bodyWidth * 0.35;
+    const tailX = -bodyLength / 2 + bodyWidth * 0.25;
+    const s = bodyWidth / 18;
+
+    // 小尖耳
+    ctx.fillStyle = "#E65100";
+    ctx.beginPath();
+    ctx.moveTo(headX - 3 * s, -bodyWidth * 0.25);
+    ctx.lineTo(headX - 7 * s, -bodyWidth * 0.55);
+    ctx.lineTo(headX, -bodyWidth * 0.3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(headX - 3 * s, bodyWidth * 0.25);
+    ctx.lineTo(headX - 7 * s, bodyWidth * 0.55);
+    ctx.lineTo(headX, bodyWidth * 0.3);
+    ctx.closePath();
+    ctx.fill();
+
+    // 眼睛
+    const eyeX = headX - 1 * s;
+    const eyeY = bodyWidth * 0.12;
+    ctx.fillStyle = "#333";
+    ctx.beginPath();
+    ctx.arc(eyeX, -eyeY, 2.3 * s, 0, Math.PI * 2);
+    ctx.arc(eyeX, eyeY, 2.3 * s, 0, Math.PI * 2);
+    ctx.fill();
+    // 眼睛高光
+    ctx.fillStyle = "#FFF";
+    ctx.beginPath();
+    ctx.arc(eyeX - 0.6 * s, -eyeY - 0.6 * s, 0.9 * s, 0, Math.PI * 2);
+    ctx.arc(eyeX - 0.6 * s, eyeY - 0.6 * s, 0.9 * s, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 黑鼻尖
+    ctx.fillStyle = "#1A1A1A";
+    ctx.beginPath();
+    ctx.ellipse(headX + 4 * s, 0, 2 * s, 1.5 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 尾巴主体
+    ctx.fillStyle = "#E65100";
+    ctx.beginPath();
+    ctx.ellipse(tailX - 2 * s, 0, 5 * s, 3 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 白尖尾
+    ctx.fillStyle = "#FFF8E1";
+    ctx.beginPath();
+    ctx.ellipse(tailX - 6 * s, 0, 2.5 * s, 2 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  /**
+   * 绘制熊猫特征（黑白）- 简洁版
+   * 黑眼圈+眼珠 + 黑鼻 + 小圆耳 + 小黑尾
+   */
+  static drawPandaFeatures(ctx, bodyLength, bodyWidth) {
+    const headX = bodyLength / 2 - bodyWidth * 0.35;
+    const tailX = -bodyLength / 2 + bodyWidth * 0.25;
+    const s = bodyWidth / 18;
+
+    // 小圆耳
+    ctx.fillStyle = "#1A1A1A";
+    ctx.beginPath();
+    ctx.arc(headX - 5 * s, -bodyWidth * 0.38, 3.5 * s, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(headX - 5 * s, bodyWidth * 0.38, 3.5 * s, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 黑眼圈
+    ctx.fillStyle = "#1A1A1A";
+    ctx.beginPath();
+    ctx.ellipse(
+      headX - 1 * s,
+      -bodyWidth * 0.14,
+      3.5 * s,
+      2.5 * s,
+      -0.2,
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(
+      headX - 1 * s,
+      bodyWidth * 0.14,
+      3.5 * s,
+      2.5 * s,
+      0.2,
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+
+    // 眼珠
+    const eyeX = headX - 0.5 * s;
+    const eyeY = bodyWidth * 0.14;
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(eyeX, -eyeY, 1.8 * s, 0, Math.PI * 2);
+    ctx.arc(eyeX, eyeY, 1.8 * s, 0, Math.PI * 2);
+    ctx.fill();
+    // 眼睛高光
+    ctx.fillStyle = "#FFF";
+    ctx.beginPath();
+    ctx.arc(eyeX - 0.5 * s, -eyeY - 0.5 * s, 0.8 * s, 0, Math.PI * 2);
+    ctx.arc(eyeX - 0.5 * s, eyeY - 0.5 * s, 0.8 * s, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 黑鼻
+    ctx.fillStyle = "#1A1A1A";
+    ctx.beginPath();
+    ctx.ellipse(headX + 3.5 * s, 0, 2 * s, 1.5 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 小黑尾
+    ctx.fillStyle = "#1A1A1A";
+    ctx.beginPath();
+    ctx.arc(tailX, 0, 2.5 * s, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   /**
    * 绘制默认特征（兼容旧类型）
    */
   static drawDefaultFeatures(ctx, bodyLength, bodyWidth) {
-    const headX = bodyLength / 2 - 8;
-
-    // 简单的头部
-    ctx.fillStyle = "rgba(0, 0, 0, 0.15)";
-    ctx.beginPath();
-    ctx.arc(headX, 0, bodyWidth * 0.35, 0, Math.PI * 2);
-    ctx.fill();
+    const headX = bodyLength / 2 - bodyWidth * 0.35;
+    const s = bodyWidth / 18;
 
     // 眼睛
+    const eyeX = headX - 2 * s;
+    const eyeY = bodyWidth * 0.13;
     ctx.fillStyle = "#333";
     ctx.beginPath();
-    ctx.arc(headX + 3, -bodyWidth * 0.12, 2, 0, Math.PI * 2);
-    ctx.arc(headX + 3, bodyWidth * 0.12, 2, 0, Math.PI * 2);
+    ctx.arc(eyeX, -eyeY, 2.2 * s, 0, Math.PI * 2);
+    ctx.arc(eyeX, eyeY, 2.2 * s, 0, Math.PI * 2);
     ctx.fill();
-
     // 眼睛高光
     ctx.fillStyle = "#FFF";
     ctx.beginPath();
-    ctx.arc(headX + 2, -bodyWidth * 0.12 - 0.5, 0.8, 0, Math.PI * 2);
-    ctx.arc(headX + 2, bodyWidth * 0.12 - 0.5, 0.8, 0, Math.PI * 2);
+    ctx.arc(eyeX - 0.6 * s, -eyeY - 0.6 * s, 0.8 * s, 0, Math.PI * 2);
+    ctx.arc(eyeX - 0.6 * s, eyeY - 0.6 * s, 0.8 * s, 0, Math.PI * 2);
     ctx.fill();
 
-    // 默认耳朵
-    ctx.fillStyle = "rgba(0, 0, 0, 0.1)";
+    // 鼻子
+    ctx.fillStyle = "#444";
     ctx.beginPath();
-    ctx.arc(headX - 6, -bodyWidth * 0.35, 4, 0, Math.PI * 2);
+    ctx.ellipse(headX + 4 * s, 0, 2 * s, 1.5 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 小耳朵
+    ctx.fillStyle = "rgba(0, 0, 0, 0.15)";
+    ctx.beginPath();
+    ctx.arc(headX - 5 * s, -bodyWidth * 0.35, 3 * s, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.arc(headX - 6, bodyWidth * 0.35, 4, 0, Math.PI * 2);
+    ctx.arc(headX - 5 * s, bodyWidth * 0.35, 3 * s, 0, Math.PI * 2);
     ctx.fill();
   }
 
