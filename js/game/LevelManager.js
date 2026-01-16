@@ -32,6 +32,9 @@ export default class LevelManager {
         blockData.type,
         blockData.size
       );
+      block.axis = blockData.axis || null;
+      block.gridRow = Number.isFinite(blockData.gridRow) ? blockData.gridRow : null;
+      block.gridCol = Number.isFinite(blockData.gridCol) ? blockData.gridCol : null;
       blocks.push(block);
     }
 

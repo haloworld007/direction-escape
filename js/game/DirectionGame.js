@@ -43,6 +43,10 @@ export default class DirectionGame {
     // 道具使用模式
     this.propMode = null; // null, 'grab', 'flip', 'shuffle'
 
+    // 预生成关卡缓存，减少切换卡顿
+    this.preloadedLevels = new Map();
+    this.preloadLevel(1, true);
+
     // 绑定触摸事件
     this.initTouchEvent();
 
@@ -291,25 +295,38 @@ export default class DirectionGame {
     // 获取所有未消除方块的“中心点位置”
     // 关键：不能交换 top-left（不同方向/尺寸会导致对齐崩坏），交换中心点才能保持排列感
     const activeBlocks = databus.blocks.filter(b => !b.isRemoved);
-    const centers = activeBlocks.map(b => ({
-      cx: b.x + b.width / 2,
-      cy: b.y + b.height / 2
-    }));
+    const groups = new Map();
+    activeBlocks.forEach(block => {
+      const axis = block.axis || (block.direction === 0 || block.direction === 2 ? 'row' : 'col');
+      if (!block.axis) block.axis = axis;
+      if (!groups.has(axis)) groups.set(axis, []);
+      groups.get(axis).push(block);
+    });
 
-    // Fisher-Yates 洗牌算法
-    for (let i = centers.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [centers[i], centers[j]] = [centers[j], centers[i]];
-    }
+    groups.forEach(group => {
+      const slots = group.map(b => ({
+        cx: b.x + b.width / 2,
+        cy: b.y + b.height / 2,
+        gridRow: b.gridRow,
+        gridCol: b.gridCol
+      }));
 
-    // 应用新位置
-    activeBlocks.forEach((block, index) => {
-      const cx = centers[index].cx;
-      const cy = centers[index].cy;
-      block.x = cx - block.width / 2;
-      block.y = cy - block.height / 2;
-      block.originalX = block.x;
-      block.originalY = block.y;
+      for (let i = slots.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [slots[i], slots[j]] = [slots[j], slots[i]];
+      }
+
+      group.forEach((block, index) => {
+        const slot = slots[index];
+        block.x = slot.cx - block.width / 2;
+        block.y = slot.cy - block.height / 2;
+        block.originalX = block.x;
+        block.originalY = block.y;
+        if (Number.isFinite(slot.gridRow) && Number.isFinite(slot.gridCol)) {
+          block.gridRow = slot.gridRow;
+          block.gridCol = slot.gridCol;
+        }
+      });
     });
 
     // 更新UI
@@ -337,7 +354,10 @@ export default class DirectionGame {
     const directions = [0, 1, 2, 3]; // UP, RIGHT, DOWN, LEFT
     databus.blocks.forEach(block => {
       if (!block.isRemoved) {
-        const dir = directions[Math.floor(Math.random() * 4)];
+        const axis = block.axis || (block.direction === 0 || block.direction === 2 ? 'row' : 'col');
+        const axisDirs = axis === 'row' ? [0, 2] : axis === 'col' ? [1, 3] : directions;
+        const dir = axisDirs[Math.floor(Math.random() * axisDirs.length)];
+        if (!block.axis && (axis === 'row' || axis === 'col')) block.axis = axis;
         if (typeof block.setDirection === 'function') {
           block.setDirection(dir);
         } else {
@@ -406,8 +426,10 @@ export default class DirectionGame {
       // 播放点击失败音效
       this.audioManager.playSFX('clickFail');
 
-      // 不可消除，抖动反馈
-      block.shake();
+      // 不可消除，向阻塞方向滑动到尽头
+      if (!block.slideToBlocked(databus.blocks)) {
+        block.shake();
+      }
     }
   }
 
@@ -515,7 +537,9 @@ export default class DirectionGame {
     databus.reset();
 
     // 生成关卡
-    const levelData = this.levelManager.generateLevel(levelNumber);
+    const cached = this.preloadedLevels.get(levelNumber);
+    const levelData = cached || this.levelManager.generateLevel(levelNumber);
+    if (cached) this.preloadedLevels.delete(levelNumber);
 
     // 创建方块实例
     databus.blocks = levelData.blocks;
@@ -539,7 +563,29 @@ export default class DirectionGame {
     // 切换到游戏进行BGM
     this.audioManager.playBGM('playing');
 
+    // 预生成下一关，减少后续卡顿
+    this.preloadLevel(levelNumber + 1);
+
     console.log(`关卡 ${levelNumber} 开始，方块数量: ${databus.totalBlocks}`);
+  }
+
+  preloadLevel(levelNumber, immediate = false) {
+    if (levelNumber <= 0) return;
+    if (this.preloadedLevels.has(levelNumber)) return;
+    const build = () => {
+      if (this.state !== 'menu' && this.state !== 'victory' && this.state !== 'defeat') {
+        return;
+      }
+      const levelData = this.levelManager.generateLevel(levelNumber);
+      this.preloadedLevels.set(levelNumber, levelData);
+    };
+
+    if (immediate) {
+      build();
+      return;
+    }
+
+    setTimeout(build, 0);
   }
 
   /**

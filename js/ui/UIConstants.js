@@ -58,20 +58,21 @@ export const COLORS = {
  */
 export const BLOCK_SIZES = {
   // 胶囊长边：更贴近效果图（长度≈2×宽度+间距）
-  // 当前 WIDTH=24, SPACING=4 => LENGTH≈52
-  LENGTH: 52,
-  WIDTH: 24,          // 宽度（纵向）- 缩小25%
+  // 当前 WIDTH=20, SPACING=4 => LENGTH≈44
+  LENGTH: 44,
+  WIDTH: 20,          // 宽度（纵向）- 缩小
   MIN_CLICK_AREA: 24, // 最小可点击区域
   SPACING: 2,         // 相邻方块间距
-  CORNER_RADIUS: 10,  // 胶囊圆角
+  CORNER_RADIUS: 8,   // 胶囊圆角
 
   // 网格单元计算（必须容纳最大尺寸）
-  GRID_CELL_SIZE: 56,        // 单元格大小：约52px（长边）+ 4px间距
+  GRID_CELL_SIZE: 48,        // 单元格大小：约44px（长边）+ 4px间距
   GRID_SPACING: 4,           // 单元格之间间距
   SAFETY_MARGIN: 6,          // 防溢出安全边距
   RENDER_MARGIN: 10,         // 渲染外扩余量（阴影/描边/缩放）
-  HITBOX_INSET: 6,           // 逻辑碰撞内缩（减少AABB误判）
-  CAPSULE_ASPECT_RATIO: 52 / 24  // 胶囊长宽比 2.17:1
+  HITBOX_INSET: 4,           // 逻辑碰撞内缩（减少AABB误判）
+  COLLISION_SHRINK: 0.22,    // 阻挡检测内缩比例
+  CAPSULE_ASPECT_RATIO: 44 / 20  // 胶囊长宽比 2.2:1
 };
 
 /**
@@ -98,6 +99,7 @@ export const LAYOUT = {
   BOTTOM_BAR_HEIGHT: 110,    // 底部道具栏高度（增大以容纳更大按钮）
   PROGRESS_BAR_HEIGHT: 12,   // 进度条高度
   SIDE_PADDING: 16,          // 左右边距
+  BOARD_SIDE_PADDING: 4,     // 棋盘区域左右边距（更贴边）
   TOP_PADDING: 16,           // 顶部边距
 
   // 棋盘区域（关卡UI与关卡生成必须共用同一套参数）
@@ -128,6 +130,14 @@ export const FONT_SIZES = {
 export const FONT_WEIGHTS = {
   BOLD: 'bold',
   NORMAL: 'normal'
+};
+
+/**
+ * 字体族
+ */
+export const FONT_FAMILIES = {
+  DISPLAY: "Futura, Avenir Next, PingFang SC, Hiragino Sans GB, sans-serif",
+  UI: "Avenir Next, Trebuchet MS, PingFang SC, Hiragino Sans GB, sans-serif"
 };
 
 // ==================== 动画参数 ====================
@@ -291,9 +301,12 @@ export function drawCapsule(ctx, x, y, width, height) {
  * 获取棋盘区域矩形（关卡UI与关卡生成共用）
  */
 export function getBoardRect(screenWidth, screenHeight) {
-  const x = LAYOUT.SIDE_PADDING;
+  const sidePadding = typeof LAYOUT.BOARD_SIDE_PADDING === 'number'
+    ? LAYOUT.BOARD_SIDE_PADDING
+    : LAYOUT.SIDE_PADDING;
+  const x = sidePadding;
   const y = LAYOUT.TOP_BAR_HEIGHT + LAYOUT.BOARD_TOP_OFFSET;
-  const width = screenWidth - LAYOUT.SIDE_PADDING * 2;
+  const width = screenWidth - sidePadding * 2;
   const bottomY = screenHeight - LAYOUT.BOTTOM_BAR_HEIGHT - LAYOUT.BOARD_BOTTOM_MARGIN;
   const height = Math.max(0, bottomY - y);
 

@@ -8,6 +8,7 @@ import {
   BUTTON_SIZES,
   COLORS,
   FONT_SIZES,
+  FONT_FAMILIES,
   drawRoundRect
 } from './UIConstants';
 
@@ -27,6 +28,7 @@ export default class Button {
     this.textColor = options.textColor || COLORS.TEXT_PRIMARY;
     this.fontSize = options.fontSize || FONT_SIZES.BUTTON;
     this.fontWeight = options.fontWeight || 'bold';
+    this.fontFamily = options.fontFamily || FONT_FAMILIES.UI;
 
     // 动画状态
     this.scale = 1;
@@ -138,7 +140,7 @@ export default class Button {
    */
   drawText(ctx) {
     ctx.fillStyle = this.textColor;
-    ctx.font = `${this.fontWeight} ${this.fontSize}px Arial`;
+    ctx.font = `${this.fontWeight} ${this.fontSize}px ${this.fontFamily}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 

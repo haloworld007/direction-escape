@@ -36,15 +36,21 @@ export default class Block extends Sprite {
     this.isRemoved = false; // 是否已消除
     this.isMoving = false; // 是否正在移动
     this.isShaking = false; // 是否正在抖动
+    this.axis = null; // 网格轴向（row/col）
+    this.gridRow = null; // 网格行
+    this.gridCol = null; // 网格列
 
     // 滑出动画相关（使用缓动）
     this.slideStartTime = 0; // 滑动开始时间
     this.slideDuration = 400; // 滑动持续时间（ms）
+    this.slideMode = null; // 'out' | 'block'
     this.startX = 0; // 滑动起始X
     this.startY = 0; // 滑动起始Y
     this.targetX = 0; // 目标位置X
     this.targetY = 0; // 目标位置Y
     this.slideScale = 1; // 滑动时的缩放（美化效果）
+    this.slideGridDeltaRow = 0; // 滑动后的网格行偏移
+    this.slideGridDeltaCol = 0; // 滑动后的网格列偏移
 
     // 抖动相关
     this.shakeTimer = 0; // 抖动计时器
@@ -87,6 +93,8 @@ export default class Block extends Sprite {
     this.visible = true;
     this.originalX = x;
     this.originalY = y;
+    this.slideGridDeltaRow = 0;
+    this.slideGridDeltaCol = 0;
 
     // 不使用图片资源
     this.img = null;
@@ -171,6 +179,7 @@ export default class Block extends Sprite {
 
     this.isRemoved = true;
     this.isMoving = true;
+    this.slideMode = 'out';
 
     // 记录滑动起始位置和时间
     this.startX = this.x;
@@ -204,11 +213,87 @@ export default class Block extends Sprite {
     const dy = this.targetY - this.startY;
     const distance = Math.sqrt(dx * dx + dy * dy);
     
-    // 调慢滑动速度，让玩家能清楚看到滑出过程（260-650ms，约1.3倍原速）
-    this.slideDuration = Math.min(650, Math.max(260, distance * 1.0));
+    // 调慢滑动速度，让玩家能清楚看到滑出过程（520-1300ms，更顺滑）
+    this.slideDuration = Math.min(1300, Math.max(520, distance * 2.0));
 
     // 触发事件
     this.emit('remove', this);
+  }
+
+  /**
+   * 获取当前方块的网格步长（中心点位移长度）
+   */
+  getGridCellStep() {
+    const shortSide = this.shortSide || BLOCK_SIZES.WIDTH;
+    const longSide = shortSide * (BLOCK_SIZES.LENGTH / BLOCK_SIZES.WIDTH);
+    const baseGap = Math.max(4, Math.round(shortSide * 0.35));
+    const cellGap = Math.max(baseGap, Math.round(longSide - 2 * shortSide));
+    return shortSide + cellGap;
+  }
+
+  /**
+   * 向阻挡位置滑动（不消除）
+   */
+  slideToBlocked(allBlocks) {
+    if (this.isRemoved || this.isMoving) return false;
+
+    const gridInfo = DirectionDetector.getGridBlockingSteps(this, allBlocks);
+    if (gridInfo && gridInfo.hasBlock) {
+      const steps = gridInfo.steps;
+      if (steps <= 0) return false;
+
+      const cellStep = this.getGridCellStep();
+      const vec = this.getDirectionVector();
+      const moveDist = cellStep * steps;
+      const cx = this.x + this.width / 2;
+      const cy = this.y + this.height / 2;
+      const targetCx = cx + vec.x * moveDist;
+      const targetCy = cy + vec.y * moveDist;
+
+      this.slideGridDeltaRow = gridInfo.deltaRow * steps;
+      this.slideGridDeltaCol = gridInfo.deltaCol * steps;
+
+      this.startX = this.x;
+      this.startY = this.y;
+      this.targetX = targetCx - this.width / 2;
+      this.targetY = targetCy - this.height / 2;
+      this.slideStartTime = Date.now();
+      this.slideScale = 1;
+      this.slideMode = 'block';
+      this.isMoving = true;
+
+      const dx = this.targetX - this.startX;
+      const dy = this.targetY - this.startY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      this.slideDuration = Math.min(900, Math.max(360, distance * 1.6));
+
+      return true;
+    }
+
+    const hit = DirectionDetector.getFirstBlockingInfo(this, allBlocks, canvas.width, canvas.height);
+    if (!hit) return false;
+
+    const stopGap = Math.max(2, BLOCK_SIZES.SPACING, BLOCK_SIZES.HITBOX_INSET || 0);
+    const travel = Math.max(0, hit.t - stopGap);
+    if (travel < 1) return false;
+    const targetCx = hit.originX + hit.vector.x * travel;
+    const targetCy = hit.originY + hit.vector.y * travel;
+
+    this.startX = this.x;
+    this.startY = this.y;
+    this.targetX = targetCx - this.width / 2;
+    this.targetY = targetCy - this.height / 2;
+    this.slideStartTime = Date.now();
+    this.slideScale = 1;
+    this.slideMode = 'block';
+    this.isMoving = true;
+
+    const dx = this.targetX - this.startX;
+    const dy = this.targetY - this.startY;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    this.slideDuration = Math.min(900, Math.max(360, distance * 1.6));
+
+    return true;
   }
 
   /**
@@ -293,8 +378,10 @@ export default class Block extends Sprite {
     const elapsed = Date.now() - this.slideStartTime;
     const progress = Math.min(elapsed / this.slideDuration, 1);
     
-    // easeOutCubic 缓动：先快后慢，更自然的滑出效果
-    const eased = 1 - Math.pow(1 - progress, 3);
+    // easeInOutCubic 缓动：更平滑的加速/减速
+    const eased = progress < 0.5
+      ? 4 * progress * progress * progress
+      : 1 - Math.pow(-2 * progress + 2, 3) / 2;
     
     // 计算当前位置
     this.x = this.startX + (this.targetX - this.startX) * eased;
@@ -304,10 +391,26 @@ export default class Block extends Sprite {
     this.slideScale = 1 - progress * 0.15;
     
     if (progress >= 1) {
-      // 动画完成，完全移除
-      this.visible = false;
+      if (this.slideMode === 'out') {
+        this.visible = false;
+        this.isMoving = false;
+        this.emit('moveComplete', this);
+        return;
+      }
+
       this.isMoving = false;
-      this.emit('moveComplete', this);
+      this.slideScale = 1;
+      if (this.slideMode === 'block') {
+        if (Number.isFinite(this.gridRow) && Number.isFinite(this.gridCol)) {
+          this.gridRow += this.slideGridDeltaRow;
+          this.gridCol += this.slideGridDeltaCol;
+        }
+        this.slideGridDeltaRow = 0;
+        this.slideGridDeltaCol = 0;
+      }
+      this.originalX = this.x;
+      this.originalY = this.y;
+      this.slideMode = null;
     }
   }
 

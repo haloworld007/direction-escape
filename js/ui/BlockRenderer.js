@@ -8,10 +8,8 @@
 
 import { DIRECTIONS } from "../game/blocks/Block";
 import {
-  BLOCK_SIZES,
   ANIMAL_TYPES,
   getAnimalColor,
-  drawRoundRect,
 } from "./UIConstants";
 
 export default class BlockRenderer {
@@ -58,8 +56,6 @@ export default class BlockRenderer {
    */
   static drawAnimalBody(ctx, x, y, width, height, direction, animalType) {
     const color = getAnimalColor(animalType);
-    const bodyLength = Math.max(width, height);
-    const bodyWidth = Math.min(width, height);
 
     // 阴影效果（更强烈）
     ctx.shadowColor = "rgba(0, 0, 0, 0.4)";
@@ -67,17 +63,16 @@ export default class BlockRenderer {
     ctx.shadowOffsetX = 2;
     ctx.shadowOffsetY = 3;
 
-    // 身体渐变
-    const gradient = ctx.createLinearGradient(x, y, x, y + height);
-    gradient.addColorStop(0, this.lightenColor(color, 25));
-    gradient.addColorStop(0.4, color);
-    gradient.addColorStop(1, this.darkenColor(color, 15));
+    // 身体渐变（沿长轴）
+    const gradient = ctx.createLinearGradient(x, y, x + width, y);
+    gradient.addColorStop(0, this.lightenColor(color, 20));
+    gradient.addColorStop(0.45, color);
+    gradient.addColorStop(1, this.darkenColor(color, 18));
 
     ctx.fillStyle = gradient;
 
-    // 绘制胶囊形身体
-    const radius = Math.min(bodyWidth / 2, BLOCK_SIZES.CORNER_RADIUS);
-    drawRoundRect(ctx, x, y, width, height, radius);
+    // 绘制流线型身体
+    this.drawTaperedBodyPath(ctx, x, y, width, height);
     ctx.fill();
 
     // 清除阴影
@@ -89,7 +84,7 @@ export default class BlockRenderer {
     // 明显的深色边框（效果图风格）
     ctx.strokeStyle = this.darkenColor(color, 45);
     ctx.lineWidth = 2;
-    drawRoundRect(ctx, x, y, width, height, radius);
+    this.drawTaperedBodyPath(ctx, x, y, width, height);
     ctx.stroke();
 
     // 顶部高光
@@ -97,16 +92,82 @@ export default class BlockRenderer {
       x,
       y,
       x,
-      y + height * 0.3
+      y + height * 0.5
     );
-    highlightGradient.addColorStop(0, "rgba(255, 255, 255, 0.45)");
+    highlightGradient.addColorStop(0, "rgba(255, 255, 255, 0.4)");
     highlightGradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.save();
+    this.drawTaperedBodyPath(ctx, x, y, width, height);
+    ctx.clip();
     ctx.fillStyle = highlightGradient;
-    drawRoundRect(ctx, x + 2, y + 2, width - 4, height * 0.3, radius - 2);
-    ctx.fill();
+    ctx.fillRect(x, y, width, height * 0.5);
+    ctx.restore();
+
+    // 轻微头部阴影，强调头部但不割裂
+    ctx.save();
+    this.drawTaperedBodyPath(ctx, x, y, width, height);
+    ctx.clip();
+    const headGlow = ctx.createRadialGradient(
+      x + width * 0.82,
+      y + height * 0.5,
+      height * 0.08,
+      x + width * 0.82,
+      y + height * 0.5,
+      height * 0.55
+    );
+    headGlow.addColorStop(0, 'rgba(0, 0, 0, 0.08)');
+    headGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = headGlow;
+    ctx.fillRect(x, y, width, height);
+    ctx.restore();
 
     // 绘制动物特征
     this.drawAnimalFeatures(ctx, x, y, width, height, direction, animalType);
+  }
+
+  /**
+   * 绘制流线型身体路径（尾部略窄、腹部更宽）
+   */
+  static drawTaperedBodyPath(ctx, x, y, width, height) {
+    const centerY = y + height / 2;
+    const maxRadius = height / 2;
+    let tailRadius = height * 0.5;
+    let headRadius = height * 0.4;
+    const minGap = Math.max(4, width * 0.06);
+    if (tailRadius + headRadius + minGap > width) {
+      const scale = (width - minGap) / (tailRadius + headRadius);
+      tailRadius *= scale;
+      headRadius *= scale;
+    }
+    tailRadius = Math.min(maxRadius, tailRadius);
+    headRadius = Math.min(maxRadius, headRadius);
+
+    const tailCenterX = x + tailRadius;
+    const headCenterX = x + width - headRadius;
+    const c1x = x + width * 0.35;
+    const c2x = x + width * 0.7;
+
+    ctx.beginPath();
+    ctx.moveTo(tailCenterX, centerY - tailRadius);
+    ctx.bezierCurveTo(
+      c1x,
+      centerY - tailRadius,
+      c2x,
+      centerY - headRadius,
+      headCenterX,
+      centerY - headRadius
+    );
+    ctx.arc(headCenterX, centerY, headRadius, -Math.PI / 2, Math.PI / 2, false);
+    ctx.bezierCurveTo(
+      c2x,
+      centerY + headRadius,
+      c1x,
+      centerY + tailRadius,
+      tailCenterX,
+      centerY + tailRadius
+    );
+    ctx.arc(tailCenterX, centerY, tailRadius, Math.PI / 2, -Math.PI / 2, false);
+    ctx.closePath();
   }
 
   /**

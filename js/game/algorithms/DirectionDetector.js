@@ -1,6 +1,6 @@
 /**
  * 方向阻挡检测算法
- * 使用射线检测判断方块沿朝向是否被其他方块阻挡
+ * 优先使用网格占用判断阻挡，缺失网格信息时回退射线检测
  */
 import { DIRECTIONS } from '../blocks/Block';
 import { BLOCK_SIZES } from '../../ui/UIConstants';
@@ -16,6 +16,11 @@ export default class DirectionDetector {
    */
   static isBlocked(block, allBlocks, screenWidth, screenHeight, options = null) {
     const debug = !options || options.debug !== false;
+    const gridInfo = this.getGridBlockingSteps(block, allBlocks);
+    if (gridInfo) {
+      return gridInfo.hasBlock;
+    }
+
     // 1) 对角线方向向量（单位向量）
     const inv = 1 / Math.sqrt(2);
     const directionVectors = {
@@ -96,6 +101,206 @@ export default class DirectionDetector {
   }
 
   /**
+   * 基于网格的阻挡检测（优先使用）
+   */
+  static getGridBlockingSteps(block, allBlocks) {
+    if (!block || !allBlocks) return null;
+    if (!Number.isFinite(block.gridRow) || !Number.isFinite(block.gridCol)) return null;
+
+    const axis = this.getBlockAxis(block);
+    const delta = this.getGridDirectionDelta(block.direction);
+    if (!axis || !delta) return null;
+
+    if (axis === 'row' && delta.col !== 0) return null;
+    if (axis === 'col' && delta.row !== 0) return null;
+
+    const laneCol = axis === 'row' ? block.gridCol : null;
+    const laneRow = axis === 'col' ? block.gridRow : null;
+    const frontRow = axis === 'row'
+      ? (delta.row < 0 ? block.gridRow : block.gridRow + 1)
+      : block.gridRow;
+    const frontCol = axis === 'col'
+      ? (delta.col < 0 ? block.gridCol : block.gridCol + 1)
+      : block.gridCol;
+
+    let nearest = Infinity;
+    let hasBlock = false;
+
+    for (let other of allBlocks) {
+      if (other === block) continue;
+      if (other.isRemoved) continue;
+      if (other.visible === false) continue;
+
+      const cells = this.getBlockCells(other);
+      if (!cells) continue;
+
+      for (const cell of cells) {
+        if (axis === 'row') {
+          if (cell.col !== laneCol) continue;
+          const deltaRow = cell.row - frontRow;
+          if (delta.row < 0) {
+            if (deltaRow <= 0) {
+              const steps = -deltaRow - 1;
+              if (steps < nearest) {
+                nearest = steps;
+                hasBlock = true;
+              }
+            }
+          } else {
+            if (deltaRow >= 0) {
+              const steps = deltaRow - 1;
+              if (steps < nearest) {
+                nearest = steps;
+                hasBlock = true;
+              }
+            }
+          }
+        } else {
+          if (cell.row !== laneRow) continue;
+          const deltaCol = cell.col - frontCol;
+          if (delta.col < 0) {
+            if (deltaCol <= 0) {
+              const steps = -deltaCol - 1;
+              if (steps < nearest) {
+                nearest = steps;
+                hasBlock = true;
+              }
+            }
+          } else {
+            if (deltaCol >= 0) {
+              const steps = deltaCol - 1;
+              if (steps < nearest) {
+                nearest = steps;
+                hasBlock = true;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (!hasBlock) {
+      return { hasBlock: false, steps: 0, deltaRow: delta.row, deltaCol: delta.col };
+    }
+
+    return {
+      hasBlock: true,
+      steps: Math.max(0, nearest),
+      deltaRow: delta.row,
+      deltaCol: delta.col
+    };
+  }
+
+  static getBlockAxis(block) {
+    if (block.axis === 'row' || block.axis === 'col') return block.axis;
+    if (block.direction === DIRECTIONS.UP || block.direction === DIRECTIONS.DOWN) return 'row';
+    if (block.direction === DIRECTIONS.LEFT || block.direction === DIRECTIONS.RIGHT) return 'col';
+    return null;
+  }
+
+  static getBlockCells(block) {
+    if (!Number.isFinite(block.gridRow) || !Number.isFinite(block.gridCol)) return null;
+    const axis = this.getBlockAxis(block);
+    if (axis === 'row') {
+      return [
+        { row: block.gridRow, col: block.gridCol },
+        { row: block.gridRow + 1, col: block.gridCol }
+      ];
+    }
+    if (axis === 'col') {
+      return [
+        { row: block.gridRow, col: block.gridCol },
+        { row: block.gridRow, col: block.gridCol + 1 }
+      ];
+    }
+    return null;
+  }
+
+  static getGridDirectionDelta(direction) {
+    switch (direction) {
+      case DIRECTIONS.UP:
+        return { row: -1, col: 0 };
+      case DIRECTIONS.DOWN:
+        return { row: 1, col: 0 };
+      case DIRECTIONS.LEFT:
+        return { row: 0, col: -1 };
+      case DIRECTIONS.RIGHT:
+        return { row: 0, col: 1 };
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * 获取射线方向上的首个阻挡信息
+   */
+  static getFirstBlockingInfo(block, allBlocks, screenWidth, screenHeight) {
+    const inv = 1 / Math.sqrt(2);
+    const directionVectors = {
+      [DIRECTIONS.UP]: { x: inv, y: -inv },
+      [DIRECTIONS.RIGHT]: { x: inv, y: inv },
+      [DIRECTIONS.DOWN]: { x: -inv, y: inv },
+      [DIRECTIONS.LEFT]: { x: -inv, y: -inv }
+    };
+
+    const vector = directionVectors[block.direction];
+    if (!vector) return null;
+
+    const centerX = block.x + block.width / 2;
+    const centerY = block.y + block.height / 2;
+    const inset = BLOCK_SIZES.HITBOX_INSET || 0;
+    const moveHalfW = Math.max(0, block.width - inset * 2) / 2;
+    const moveHalfH = Math.max(0, block.height - inset * 2) / 2;
+
+    let closest = null;
+    let minT = Infinity;
+
+    for (let other of allBlocks) {
+      if (other === block) continue;
+      if (other.isRemoved) continue;
+      if (other.visible === false) continue;
+
+      const hitRect = this.getHitRect(other);
+      const expanded = {
+        x: hitRect.x - moveHalfW,
+        y: hitRect.y - moveHalfH,
+        width: hitRect.width + moveHalfW * 2,
+        height: hitRect.height + moveHalfH * 2
+      };
+
+      const t = this.rayIntersectAABB(centerX, centerY, vector.x, vector.y, expanded);
+      if (t !== null && t >= 0 && t < minT) {
+        minT = t;
+        closest = other;
+      }
+    }
+
+    if (!closest) return null;
+    return { block: closest, t: minT, originX: centerX, originY: centerY, vector };
+  }
+
+  static rayIntersectAABB(startX, startY, dirX, dirY, rect) {
+    if (startX >= rect.x && startX <= rect.x + rect.width &&
+        startY >= rect.y && startY <= rect.y + rect.height) {
+      return 0;
+    }
+
+    const invX = 1 / dirX;
+    const invY = 1 / dirY;
+
+    let t1 = (rect.x - startX) * invX;
+    let t2 = (rect.x + rect.width - startX) * invX;
+    let t3 = (rect.y - startY) * invY;
+    let t4 = (rect.y + rect.height - startY) * invY;
+
+    const tmin = Math.max(Math.min(t1, t2), Math.min(t3, t4));
+    const tmax = Math.min(Math.max(t1, t2), Math.max(t3, t4));
+
+    if (tmax < 0 || tmin > tmax) return null;
+    return tmin;
+  }
+
+  /**
    * 检查点是否在屏幕外
    */
   static isOutOfBounds(x, y, screenWidth, screenHeight) {
@@ -122,7 +327,9 @@ export default class DirectionDetector {
   }
 
   static getHitRect(block) {
-    const inset = BLOCK_SIZES.HITBOX_INSET || 0;
+    const ratio = BLOCK_SIZES.COLLISION_SHRINK || 0;
+    const ratioInset = Math.min(block.width, block.height) * ratio;
+    const inset = Math.max(BLOCK_SIZES.HITBOX_INSET || 0, ratioInset);
     const width = Math.max(0, block.width - inset * 2);
     const height = Math.max(0, block.height - inset * 2);
     return {

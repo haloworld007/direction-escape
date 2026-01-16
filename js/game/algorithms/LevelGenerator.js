@@ -146,6 +146,8 @@ export default class LevelGenerator {
 
       const neighbor = neighbors[Math.floor(rand() * neighbors.length)];
       const axis = neighbor.col !== cell.col ? 'col' : 'row';
+      const gridRow = axis === 'row' ? Math.min(cell.row, neighbor.row) : cell.row;
+      const gridCol = axis === 'col' ? Math.min(cell.col, neighbor.col) : cell.col;
       const blockCenterX = (cell.x + neighbor.x) / 2;
       const blockCenterY = (cell.y + neighbor.y) / 2;
       const direction = this.pickDirectionForPair(
@@ -178,6 +180,8 @@ export default class LevelGenerator {
         height: bh,
         direction,
         axis,
+        gridRow,
+        gridCol,
         type: animalType,
         size: shortSide
       });
@@ -200,6 +204,8 @@ export default class LevelGenerator {
 
         const neighbor = neighbors[Math.floor(rand() * neighbors.length)];
         const axis = neighbor.col !== cell.col ? 'col' : 'row';
+        const gridRow = axis === 'row' ? Math.min(cell.row, neighbor.row) : cell.row;
+        const gridCol = axis === 'col' ? Math.min(cell.col, neighbor.col) : cell.col;
         const blockCenterX = (cell.x + neighbor.x) / 2;
         const blockCenterY = (cell.y + neighbor.y) / 2;
         const direction = this.pickDirectionForPair(
@@ -231,6 +237,8 @@ export default class LevelGenerator {
           height: bh,
           direction,
           axis,
+          gridRow,
+          gridCol,
           type: animalType,
           size: shortSide
         });
@@ -242,7 +250,16 @@ export default class LevelGenerator {
     }
 
     this.ensureRemovableBlocks(blocks, screenWidth, screenHeight, centerX, centerY, shortSide);
-    this.ensureSolvablePath(blocks, screenWidth, screenHeight, centerX, centerY, shortSide, seed);
+    const solvable = this.ensureSolvablePath(
+      blocks,
+      screenWidth,
+      screenHeight,
+      centerX,
+      centerY,
+      shortSide,
+      seed
+    );
+    blocks._solvable = solvable;
 
     return blocks;
   }
@@ -286,9 +303,10 @@ export default class LevelGenerator {
 
     const candidates = [];
     if (safeBoardRect.width > 0 && safeBoardRect.height > 0) {
-      const maxRadius = Math.floor(Math.min(safeBoardRect.width, safeBoardRect.height) / (2 * step));
-      for (let row = -maxRadius; row <= maxRadius; row++) {
-        for (let col = -maxRadius; col <= maxRadius; col++) {
+      const maxRow = Math.floor(safeBoardRect.height / (2 * step));
+      const maxCol = Math.floor(safeBoardRect.width / (2 * step));
+      for (let row = -maxRow; row <= maxRow; row++) {
+        for (let col = -maxCol; col <= maxCol; col++) {
           const x = centerX + (col - row) * step;
           const y = centerY + (col + row) * step;
 
@@ -702,8 +720,19 @@ export default class LevelGenerator {
       return false;
     }
 
+    const knownSolvable = blocks._solvable;
+    if (knownSolvable === false) {
+      console.log('[LevelGenerator] 验证: 预判不可解');
+      return false;
+    }
+
+    if (knownSolvable === true) {
+      console.log(`[LevelGenerator] 验证: 可消除 ${removableCount}/${blocks.length}, 最低要求 ${minRequired}, 可解: true`);
+      return true;
+    }
+
     const baseSeed = typeof seed === 'number' ? seed : 0;
-    const solvable = this.hasSolvablePath(normalized, screenWidth, screenHeight, baseSeed, 8);
+    const solvable = this.hasSolvablePath(normalized, screenWidth, screenHeight, baseSeed, 6);
     console.log(`[LevelGenerator] 验证: 可消除 ${removableCount}/${blocks.length}, 最低要求 ${minRequired}, 可解: ${solvable}`);
     return solvable;
   }
@@ -740,27 +769,27 @@ export default class LevelGenerator {
 
     if (level <= 3) {
       return {
-        blockCount: 48 + level * 6,  // 54-66
+        blockCount: 62 + level * 6,  // 68-80
         blockSize: LARGE_BLOCK,
-        holeRateRange: [0.12, 0.18]
+        holeRateRange: [0.08, 0.14]
       };
     } else if (level <= 10) {
       return {
-        blockCount: 70 + (level - 3) * 6,  // 76-112
+        blockCount: 84 + (level - 3) * 6,  // 90-126
         blockSize: MEDIUM_BLOCK,
-        holeRateRange: [0.12, 0.18]
+        holeRateRange: [0.08, 0.12]
       };
     } else if (level <= 20) {
       return {
-        blockCount: 100 + (level - 10) * 5,  // 105-150
+        blockCount: 114 + (level - 10) * 5,  // 119-164
         blockSize: SMALL_BLOCK,
-        holeRateRange: [0.1, 0.16]
+        holeRateRange: [0.06, 0.1]
       };
     } else {
       return {
-        blockCount: Math.min(175, 130 + (level - 20) * 4),
+        blockCount: Math.min(200, 145 + (level - 20) * 4),
         blockSize: SMALL_BLOCK,
-        holeRateRange: [0.08, 0.12]
+        holeRateRange: [0.05, 0.08]
       };
     }
   }
