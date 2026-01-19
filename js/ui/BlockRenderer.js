@@ -16,17 +16,23 @@ export default class BlockRenderer {
    */
   static render(ctx, block) {
     const { x, y, width, height, direction, type } = block;
+    // 四面八方飞入偏移
+    const spawnOffsetX = block.spawnOffsetX || 0;
+    const spawnOffsetY = block.spawnOffsetY || 0;
+    const renderX = x - spawnOffsetX;
+    const renderY = y - spawnOffsetY;
 
-    // 计算综合缩放（滑出缩放 + 弹跳缩放）
+    // 计算综合缩放（滑出缩放 + 弹跳缩放 + 入场缩放）
     const slideScale = block.slideScale || 1;
     const bounceScale = block.bounceScale || 1;
-    const scale = slideScale * bounceScale;
+    const spawnScale = block.spawnScale || 1;
+    const scale = slideScale * bounceScale * spawnScale;
 
     ctx.save();
 
     // 以碰撞盒中心为原点，旋转绘制"胶囊本体45°"
-    const centerX = x + width / 2;
-    const centerY = y + height / 2;
+    const centerX = renderX + width / 2;
+    const centerY = renderY + height / 2;
     const bodyW = block.bodyWidth || Math.max(width, height);
     const bodyH = block.bodyHeight || Math.min(width, height);
     const rotation = typeof block.rotation === "number" ? block.rotation : 0;
@@ -85,6 +91,9 @@ export default class BlockRenderer {
     this.drawCapsulePath(ctx, x, y, width, height);
     ctx.stroke();
 
+    // 绘制颈部线条 (区分头身)
+    this.drawNeckLine(ctx, x, y, width, height, color);
+
     // 顶部高光
     const highlightGradient = ctx.createLinearGradient(
       x,
@@ -106,26 +115,83 @@ export default class BlockRenderer {
   }
 
   /**
-   * 绘制圆润胶囊路径（2.5:1 比例优化）
+   * 绘制颈部线条（半透明弧线）
+   */
+  static drawNeckLine(ctx, x, y, width, height, color) {
+    const centerY = y + height / 2;
+    const r = height / 2;
+    // 头部半径略小于身体半径
+    const headRadius = r * 0.9;
+    
+    // 颈部位置：头部圆心向左偏移一点，大概在头部和身体连接处
+    // 头部圆心 x + width - headRadius
+    // 向左偏移一点点作为颈部线的位置
+    const neckX = x + width - headRadius * 1.5; 
+    
+    ctx.save();
+    // 使用深一点的体色作为线条颜色
+    ctx.strokeStyle = this.darkenColor(color, 20);
+    ctx.lineWidth = 1.2; // 稍微细一点
+    ctx.lineCap = "round";
+    ctx.globalAlpha = 0.4; // 半透明，不要太抢眼
+
+    ctx.beginPath();
+    // 从上往下画个微弧
+    // 上起点
+    ctx.moveTo(neckX, y + height * 0.15); 
+    // 控制点稍微向右，形成 ) 形状，模拟脖子褶皱
+    ctx.quadraticCurveTo(neckX + width * 0.04, centerY, neckX, y + height * 0.85);
+    
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /**
+   * 绘制优化后的动物身体形状（Q萌梨形/葫芦形）
+   * 形状特征：头部圆润 -> 脖子收腰 -> 屁股圆润宽大
    */
   static drawCapsulePath(ctx, x, y, width, height) {
     const centerY = y + height / 2;
-    const radius = height / 2;
+    // 基础半径 (身体高度的一半)
+    const r = height / 2;
+    
+    // 头部略微收一点，显得精致 (半径 0.45h)
+    const headRadius = r * 0.9;
+    // 尾部加大，显得敦实可爱 (半径 0.55h)
+    const tailRadius = r * 1.1;
 
-    // 左右两端使用相同的圆角半径，形成标准胶囊形
-    const leftCenterX = x + radius;
-    const rightCenterX = x + width - radius;
+    // 圆心位置
+    const headCenterX = x + width - headRadius;
+    const tailCenterX = x + tailRadius;
 
     ctx.beginPath();
-    // 顶部直线
-    ctx.moveTo(leftCenterX, y);
-    ctx.lineTo(rightCenterX, y);
-    // 右端圆弧（头部）
-    ctx.arc(rightCenterX, centerY, radius, -Math.PI / 2, Math.PI / 2, false);
-    // 底部直线
-    ctx.lineTo(leftCenterX, y + height);
-    // 左端圆弧（尾部）
-    ctx.arc(leftCenterX, centerY, radius, Math.PI / 2, -Math.PI / 2, false);
+    
+    // 1. 头部右半圆
+    // 从 -90度(顶部) 到 90度(底部)
+    ctx.arc(headCenterX, centerY, headRadius, -Math.PI / 2, Math.PI / 2, false);
+
+    // 颈部收缩量 (向内凹陷的程度)
+    const pinchY = height * 0.15;
+
+    // 2. 下边缘（脖子收缩 -> 肥臀）
+    // 使用三次贝塞尔曲线连接头部底部和尾部底部
+    ctx.bezierCurveTo(
+      headCenterX - width * 0.25, centerY + headRadius - pinchY, // CP1: 头部后方，向内收缩形成脖子
+      tailCenterX + width * 0.25, centerY + tailRadius,          // CP2: 尾部前方，保持宽度形成肚子
+      tailCenterX, centerY + tailRadius                          // 终点: 尾部底部
+    );
+
+    // 3. 尾部左半圆
+    // 从 90度(底部) 到 -90度(顶部)
+    ctx.arc(tailCenterX, centerY, tailRadius, Math.PI / 2, -Math.PI / 2, false);
+
+    // 4. 上边缘 (对称)
+    ctx.bezierCurveTo(
+      tailCenterX + width * 0.25, centerY - tailRadius,          // CP1
+      headCenterX - width * 0.25, centerY - headRadius + pinchY, // CP2
+      headCenterX, centerY - headRadius                          // 终点: 头部顶部
+    );
+
     ctx.closePath();
   }
 
@@ -140,7 +206,8 @@ export default class BlockRenderer {
     ctx.translate(centerX, centerY);
 
     const bodyLength = Math.max(width, height);
-    const bodyWidth = Math.min(width, height);
+    // 稍微缩小五官以适应颈部收缩
+    const bodyWidth = Math.min(width, height) * 0.9;
 
     // 根据动物类型绘制不同特征
     switch (animalType) {

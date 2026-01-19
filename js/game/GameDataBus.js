@@ -7,19 +7,18 @@
  * - 本地存档
  */
 import Pool from '../base/pool';
-import Particle from '../base/particle';
 
 let instance;
 
 export default class GameDataBus {
   blocks = [];              // 当前关卡的所有方块
-  particles = [];           // 粒子效果
   totalBlocks = 0;          // 方块总数
   removedBlocks = 0;        // 已消除方块数
   currentLevel = 1;         // 当前关卡
   unlockedLevels = 1;       // 已解锁关卡
   isPlaying = false;        // 游戏进行中
   isDeadlock = false;       // 是否死局
+  isSpawning = false;       // 关卡生成动画中
   pool = new Pool();         // 对象池
 
   // 道具数量（PRD v1.3: 4种道具）
@@ -45,11 +44,11 @@ export default class GameDataBus {
    */
   reset() {
     this.blocks = [];
-    this.particles = [];
     this.totalBlocks = 0;
     this.removedBlocks = 0;
     this.isPlaying = false;
     this.isDeadlock = false;
+    this.isSpawning = false;
   }
 
   /**
@@ -76,13 +75,6 @@ export default class GameDataBus {
       this.blocks.splice(index, 1);
       this.pool.recover('block', block);
     }
-  }
-
-  /**
-   * 添加粒子效果
-   */
-  addParticle(particle) {
-    this.particles.push(particle);
   }
 
   /**
@@ -173,23 +165,4 @@ export default class GameDataBus {
     }
   }
 
-  /**
-   * 创建爆炸粒子效果
-   */
-  createExplosion(x, y, count = 20, color = '#FF6B6B') {
-    for (let i = 0; i < count; i++) {
-      const angle = (Math.PI * 2 / count) * i;
-      const speed = Math.random() * 3 + 2;
-      const particle = new Particle(
-        x,
-        y,
-        color,
-        Math.random() * 4 + 2,
-        Math.cos(angle) * speed,
-        Math.sin(angle) * speed,
-        30
-      );
-      this.particles.push(particle);
-    }
-  }
 }

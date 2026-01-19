@@ -63,6 +63,48 @@ export default class Block extends Sprite {
     this.isBouncing = false;   // 是否正在弹跳
     this.bounceStartTime = 0;  // 弹跳开始时间
     this.bounceDuration = 150; // 弹跳持续时间（ms）
+
+    // 生成飞入动画（支持四面八方飞入）
+    this.isSpawning = false;
+    this.spawnStartTime = 0;
+    this.spawnDelay = 0;
+    this.spawnDuration = 0;
+    this.spawnOffsetX = 0;       // X轴偏移（从四面八方飞入）
+    this.spawnOffsetY = 0;       // Y轴偏移
+    this.spawnStartOffsetX = 0;  // 起始X偏移
+    this.spawnStartOffsetY = 0;  // 起始Y偏移
+    this.spawnScale = 1;         // 入场缩放（从小到大）
+    this.spawnStartScale = 0.6;  // 入场起始缩放
+  }
+
+  /**
+   * easeOutBounce 缓动函数 - 弹跳效果
+   * @param {number} t - 进度 [0, 1]
+   * @returns {number} 缓动后的值
+   */
+  static easeOutBounce(t) {
+    const n1 = 7.5625;
+    const d1 = 2.75;
+    if (t < 1 / d1) {
+      return n1 * t * t;
+    } else if (t < 2 / d1) {
+      return n1 * (t -= 1.5 / d1) * t + 0.75;
+    } else if (t < 2.5 / d1) {
+      return n1 * (t -= 2.25 / d1) * t + 0.9375;
+    } else {
+      return n1 * (t -= 2.625 / d1) * t + 0.984375;
+    }
+  }
+
+  /**
+   * easeOutBack 缓动函数 - 轻微过冲效果
+   * @param {number} t - 进度 [0, 1]
+   * @returns {number} 缓动后的值
+   */
+  static easeOutBack(t) {
+    const c1 = 1.70158;
+    const c3 = c1 + 1;
+    return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
   }
 
   /**
@@ -96,10 +138,42 @@ export default class Block extends Sprite {
     this.slideGridDeltaRow = 0;
     this.slideGridDeltaCol = 0;
 
+    this.isSpawning = false;
+    this.spawnOffsetY = 0;
+    this.spawnScale = 1;
+
     // 不使用图片资源
     this.img = null;
 
     return this;
+  }
+
+  /**
+   * 启动飞入动画（支持四面八方飞入）
+   * @param {Object} options - 动画选项
+   * @param {number} options.offsetX - 起始X偏移量（正=从右侧飞入，负=从左侧飞入）
+   * @param {number} options.offsetY - 起始Y偏移量（正=从下方飞入，负=从上方飞入）
+   * @param {number} options.delay - 延迟时间(ms)
+   * @param {number} options.duration - 动画持续时间(ms)
+   * @param {number} options.startScale - 起始缩放(默认0.6)
+   */
+  startSpawn(options = {}) {
+    const offsetX = Number.isFinite(options.offsetX) ? options.offsetX : 0;
+    const offsetY = Number.isFinite(options.offsetY) ? options.offsetY : 120;
+    const delay = Number.isFinite(options.delay) ? options.delay : 0;
+    const duration = Number.isFinite(options.duration) ? options.duration : 480;
+    const startScale = Number.isFinite(options.startScale) ? options.startScale : 0.6;
+
+    this.spawnStartOffsetX = offsetX;
+    this.spawnStartOffsetY = offsetY;
+    this.spawnOffsetX = this.spawnStartOffsetX;
+    this.spawnOffsetY = this.spawnStartOffsetY;
+    this.spawnDelay = Math.max(0, delay);
+    this.spawnDuration = Math.max(120, duration);
+    this.spawnStartTime = Date.now();
+    this.spawnStartScale = startScale;
+    this.spawnScale = startScale;
+    this.isSpawning = true;
   }
 
   /**
@@ -355,6 +429,10 @@ export default class Block extends Sprite {
    * 更新状态
    */
   update() {
+    if (this.isSpawning) {
+      this.updateSpawn();
+    }
+
     // 更新移动
     if (this.isMoving) {
       this.updateMove();
@@ -368,6 +446,40 @@ export default class Block extends Sprite {
     // 更新弹跳
     if (this.isBouncing) {
       this.updateBounce();
+    }
+  }
+
+  /**
+   * 更新飞入动画
+   * 使用 easeOutCubic 实现平滑飞入效果，同时伴随缩放动画
+   */
+  updateSpawn() {
+    const elapsed = Date.now() - this.spawnStartTime;
+    if (elapsed < this.spawnDelay) return;
+
+    const t = Math.min((elapsed - this.spawnDelay) / this.spawnDuration, 1);
+    
+    // 位置使用 easeOutCubic 缓动 - 平滑减速效果
+    const easedPosition = 1 - Math.pow(1 - t, 3);
+    this.spawnOffsetX = this.spawnStartOffsetX * (1 - easedPosition);
+    this.spawnOffsetY = this.spawnStartOffsetY * (1 - easedPosition);
+
+    // 缩放使用 easeOutBack 缓动 - 轻微过冲后回弹
+    const easedScale = Block.easeOutBack(t);
+    const startScale = this.spawnStartScale || 0.6;
+    this.spawnScale = startScale + (1 - startScale) * easedScale;
+    // 限制缩放范围，避免过冲过大
+    this.spawnScale = Math.min(1.08, Math.max(startScale, this.spawnScale));
+
+    if (t >= 1) {
+      this.isSpawning = false;
+      this.spawnOffsetX = 0;
+      this.spawnOffsetY = 0;
+      this.spawnStartOffsetX = 0;
+      this.spawnStartOffsetY = 0;
+      this.spawnScale = 1;
+      this.originalX = this.x;
+      this.originalY = this.y;
     }
   }
 

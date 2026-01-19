@@ -10,7 +10,7 @@
 import GameDataBus from './GameDataBus';
 import LevelManager from './LevelManager';
 import DeadlockDetector from './algorithms/DeadlockDetector';
-import { BLOCK_SIZES } from '../ui/UIConstants';
+import { BLOCK_SIZES, getBoardRect } from '../ui/UIConstants';
 import MenuRenderer from '../ui/MenuRenderer';
 import GameRenderer from '../ui/GameRenderer';
 import ModalRenderer from '../ui/ModalRenderer';
@@ -43,9 +43,9 @@ export default class DirectionGame {
     // 道具使用模式
     this.propMode = null; // null, 'grab', 'flip', 'shuffle'
 
-    // 预生成关卡缓存，减少切换卡顿
-    this.preloadedLevels = new Map();
-    this.preloadLevel(1, true);
+    // 使用 LevelManager 的预加载功能
+    // 预加载前几关
+    this.levelManager.preloadLevels(1);
 
     // 绑定触摸事件
     this.initTouchEvent();
@@ -142,6 +142,8 @@ export default class DirectionGame {
    */
   handleGamePlayTouch(x, y) {
     const databus = GameGlobal.databus;
+
+    if (databus.isSpawning) return;
 
     // 检查设置按钮
     const settingsArea = this.gameRenderer.getSettingsButtonArea();
@@ -382,7 +384,7 @@ export default class DirectionGame {
   handleBlockClick(x, y) {
     const databus = GameGlobal.databus;
 
-    if (!databus.isPlaying) return;
+    if (!databus.isPlaying || databus.isSpawning) return;
 
     // 从上层到下层检查
     for (let i = databus.blocks.length - 1; i >= 0; i--) {
@@ -536,10 +538,8 @@ export default class DirectionGame {
     // 重置状态
     databus.reset();
 
-    // 生成关卡
-    const cached = this.preloadedLevels.get(levelNumber);
-    const levelData = cached || this.levelManager.generateLevel(levelNumber);
-    if (cached) this.preloadedLevels.delete(levelNumber);
+    // 生成关卡（LevelManager 会自动使用缓存）
+    const levelData = this.levelManager.generateLevel(levelNumber);
 
     // 创建方块实例
     databus.blocks = levelData.blocks;
@@ -548,6 +548,83 @@ export default class DirectionGame {
     databus.currentLevel = levelNumber;
     databus.isPlaying = true;
     databus.isDeadlock = false;
+    databus.isSpawning = true;
+
+    // 四面八方飞入动画参数
+    const boardRect = getBoardRect(canvas.width, canvas.height);
+    const baseDuration = 450;       // 基础持续时间
+    const maxStagger = 350;         // 最大延迟范围
+    const flyDistance = Math.min(canvas.width, canvas.height) * 0.4; // 飞入距离
+    
+    // DIRECTIONS 常量（与 Block.js 保持一致）
+    const DIRECTIONS = { UP: 0, RIGHT: 1, DOWN: 2, LEFT: 3 };
+    
+    // 根据方块方向获取飞入偏移（从方向的反方向飞入）
+    // UP(右上飞出) -> 从左下飞入: offsetX=-dist, offsetY=+dist
+    // RIGHT(右下飞出) -> 从左上飞入: offsetX=-dist, offsetY=-dist
+    // DOWN(左下飞出) -> 从右上飞入: offsetX=+dist, offsetY=-dist
+    // LEFT(左上飞出) -> 从右下飞入: offsetX=+dist, offsetY=+dist
+    const getSpawnOffset = (direction, dist) => {
+      const inv = 1 / Math.sqrt(2); // 45度角
+      switch (direction) {
+        case DIRECTIONS.UP:    // 右上飞出 -> 从左下飞入
+          return { x: -dist * inv, y: dist * inv };
+        case DIRECTIONS.RIGHT: // 右下飞出 -> 从左上飞入
+          return { x: -dist * inv, y: -dist * inv };
+        case DIRECTIONS.DOWN:  // 左下飞出 -> 从右上飞入
+          return { x: dist * inv, y: -dist * inv };
+        case DIRECTIONS.LEFT:  // 左上飞出 -> 从右下飞入
+          return { x: dist * inv, y: dist * inv };
+        default:
+          return { x: 0, y: -dist };
+      }
+    };
+    
+    // 计算棋盘中心点
+    const boardCenterX = boardRect.x + boardRect.width / 2;
+    const boardCenterY = boardRect.y + boardRect.height / 2;
+    const maxDist = Math.sqrt(
+      Math.pow(boardRect.width / 2, 2) + Math.pow(boardRect.height / 2, 2)
+    );
+    
+    databus.blocks.forEach((block, idx) => {
+      if (typeof block.startSpawn !== 'function') return;
+      
+      // 计算方块中心到棋盘中心的距离
+      const blockCenterX = block.x + block.width / 2;
+      const blockCenterY = block.y + block.height / 2;
+      const dx = blockCenterX - boardCenterX;
+      const dy = blockCenterY - boardCenterY;
+      const distFromCenter = Math.sqrt(dx * dx + dy * dy);
+      
+      // 距离因子：0（中心）-> 1（边缘）
+      const distFactor = Math.min(1, distFromCenter / maxDist);
+      
+      // 延迟：外围方块先出现，中心方块后出现（汇聚效果）
+      const randomJitter = (Math.random() - 0.5) * 40; // ±20ms 随机扰动
+      const delay = Math.round((1 - distFactor) * maxStagger + randomJitter);
+      
+      // 持续时间：边缘方块飞行距离更远，时间稍长
+      const durationBonus = Math.round(distFactor * 100);
+      const duration = baseDuration + durationBonus;
+      
+      // 飞入距离：边缘方块从更远处飞入
+      const blockFlyDist = flyDistance * (0.7 + distFactor * 0.5);
+      
+      // 根据方块方向计算飞入偏移
+      const spawnOffset = getSpawnOffset(block.direction, blockFlyDist);
+      
+      // 起始缩放：边缘方块起始更小
+      const startScale = 0.45 + distFactor * 0.15; // 0.45 ~ 0.6
+      
+      block.startSpawn({
+        delay: Math.max(0, delay),
+        duration,
+        offsetX: spawnOffset.x,
+        offsetY: spawnOffset.y,
+        startScale
+      });
+    });
 
     // 初始化道具按钮
     this.gameRenderer.initPropButtons(databus.items);
@@ -563,29 +640,13 @@ export default class DirectionGame {
     // 切换到游戏进行BGM
     this.audioManager.playBGM('playing');
 
-    // 预生成下一关，减少后续卡顿
-    this.preloadLevel(levelNumber + 1);
+    // 预加载后续关卡（通过 Worker 在后台执行，不阻塞主线程）
+    // 延迟一点再预加载，让当前关卡的掉落动画先播放
+    setTimeout(() => {
+      this.levelManager.preloadLevels(levelNumber + 1);
+    }, 500);
 
     console.log(`关卡 ${levelNumber} 开始，方块数量: ${databus.totalBlocks}`);
-  }
-
-  preloadLevel(levelNumber, immediate = false) {
-    if (levelNumber <= 0) return;
-    if (this.preloadedLevels.has(levelNumber)) return;
-    const build = () => {
-      if (this.state !== 'menu' && this.state !== 'victory' && this.state !== 'defeat') {
-        return;
-      }
-      const levelData = this.levelManager.generateLevel(levelNumber);
-      this.preloadedLevels.set(levelNumber, levelData);
-    };
-
-    if (immediate) {
-      build();
-      return;
-    }
-
-    setTimeout(build, 0);
   }
 
   /**
@@ -642,12 +703,10 @@ export default class DirectionGame {
         if (block.update) block.update();
       });
 
-      // 更新粒子效果
-      for (let i = databus.particles.length - 1; i >= 0; i--) {
-        const particle = databus.particles[i];
-        particle.update();
-        if (!particle.visible) {
-          databus.particles.splice(i, 1);
+      if (databus.isSpawning) {
+        const stillSpawning = databus.blocks.some(block => block.isSpawning);
+        if (!stillSpawning) {
+          databus.isSpawning = false;
         }
       }
     }
@@ -675,11 +734,6 @@ export default class DirectionGame {
         if (block.visible) {
           BlockRenderer.render(ctx, block);
         }
-      });
-
-      // 绘制粒子
-      databus.particles.forEach(particle => {
-        particle.render(ctx);
       });
 
       // 绘制弹窗

@@ -1,22 +1,269 @@
 /**
- * 随机关卡生成算法（旋转网格 + 双格方块）
- * 根据关卡号生成合适的难度布局
- * 规则：正方形网格生成槽位，整体旋转45度，每个动物占据两个相邻格子
+ * 关卡生成 Worker
+ * 在后台线程中执行关卡生成，避免阻塞主线程
  */
-import DirectionDetector from './DirectionDetector';
-import { DIRECTIONS } from '../blocks/Block';
-import { MAIN_ANIMAL_TYPES, ANIMAL_TYPES, LAYOUT, BLOCK_SIZES, getBoardRect } from '../../ui/UIConstants';
 
-export default class LevelGenerator {
-  // 主要动物类型（猪/羊/狗）
-  static ANIMAL_TYPES = MAIN_ANIMAL_TYPES;
+// ==================== 常量定义 ====================
 
-  /**
-   * 获取方块轴对齐尺寸
-   */
-  static getBlockDimensions(direction, shortSide) {
+const DIRECTIONS = {
+  UP: 0,
+  RIGHT: 1,
+  DOWN: 2,
+  LEFT: 3
+};
+
+const BLOCK_SIZES = {
+  LENGTH: 45,
+  WIDTH: 18,
+  MIN_CLICK_AREA: 24,
+  SPACING: 2,
+  CORNER_RADIUS: 9,
+  GRID_CELL_SIZE: 48,
+  GRID_SPACING: 4,
+  SAFETY_MARGIN: 6,
+  RENDER_MARGIN: 10,
+  HITBOX_INSET: 4,
+  COLLISION_SHRINK: 0.22,
+  CAPSULE_ASPECT_RATIO: 45 / 18,
+};
+
+const LAYOUT = {
+  TOP_BAR_HEIGHT: 60,
+  BOTTOM_BAR_HEIGHT: 110,
+  PROGRESS_BAR_HEIGHT: 12,
+  SIDE_PADDING: 16,
+  BOARD_SIDE_PADDING: 4,
+  TOP_PADDING: 16,
+  BOARD_TOP_OFFSET: 60,
+  BOARD_BOTTOM_MARGIN: 10,
+};
+
+const MAIN_ANIMAL_TYPES = ['pig', 'sheep', 'dog', 'fox', 'panda'];
+
+// ==================== 辅助函数 ====================
+
+function getBoardRect(screenWidth, screenHeight) {
+  const sidePadding = typeof LAYOUT.BOARD_SIDE_PADDING === 'number'
+    ? LAYOUT.BOARD_SIDE_PADDING
+    : LAYOUT.SIDE_PADDING;
+  const x = sidePadding;
+  const y = LAYOUT.TOP_BAR_HEIGHT + LAYOUT.BOARD_TOP_OFFSET;
+  const width = screenWidth - sidePadding * 2;
+  const bottomY = screenHeight - LAYOUT.BOTTOM_BAR_HEIGHT - LAYOUT.BOARD_BOTTOM_MARGIN;
+  const height = Math.max(0, bottomY - y);
+  return { x, y, width, height };
+}
+
+// ==================== 方向检测器 ====================
+
+const DirectionDetector = {
+  isBlocked(block, allBlocks, screenWidth, screenHeight, options = null) {
+    const gridInfo = this.getGridBlockingSteps(block, allBlocks);
+    if (gridInfo) {
+      return gridInfo.hasBlock;
+    }
+
+    const inv = 1 / Math.sqrt(2);
+    const directionVectors = {
+      [DIRECTIONS.UP]: { x: inv, y: -inv },
+      [DIRECTIONS.RIGHT]: { x: inv, y: inv },
+      [DIRECTIONS.DOWN]: { x: -inv, y: inv },
+      [DIRECTIONS.LEFT]: { x: -inv, y: -inv }
+    };
+
+    const vector = directionVectors[block.direction];
+    if (!vector) return true;
+
+    const centerX = block.x + block.width / 2;
+    const centerY = block.y + block.height / 2;
+    const offset = Math.max(block.width, block.height) / 2 + 2;
+    const startX = centerX + vector.x * offset;
+    const startY = centerY + vector.y * offset;
+    const stepSize = 8;
+
+    let currentX = startX;
+    let currentY = startY;
+    const maxSteps = 1000;
+    let steps = 0;
+
+    while (steps < maxSteps) {
+      steps++;
+      currentX += vector.x * stepSize;
+      currentY += vector.y * stepSize;
+
+      if (this.isOutOfBounds(currentX, currentY, screenWidth, screenHeight)) {
+        return false;
+      }
+
+      for (let other of allBlocks) {
+        if (other === block) continue;
+        if (other.isRemoved) continue;
+        if (other.visible === false) continue;
+
+        const hitRect = this.getHitRect(other);
+        if (this.pointInRect(currentX, currentY, hitRect)) {
+          return true;
+        }
+      }
+    }
+
+    return true;
+  },
+
+  getGridBlockingSteps(block, allBlocks) {
+    if (!block || !allBlocks) return null;
+    if (!Number.isFinite(block.gridRow) || !Number.isFinite(block.gridCol)) return null;
+
+    const axis = this.getBlockAxis(block);
+    const delta = this.getGridDirectionDelta(block.direction);
+    if (!axis || !delta) return null;
+
+    if (axis === 'row' && delta.col !== 0) return null;
+    if (axis === 'col' && delta.row !== 0) return null;
+
+    const laneCol = axis === 'row' ? block.gridCol : null;
+    const laneRow = axis === 'col' ? block.gridRow : null;
+    const frontRow = axis === 'row'
+      ? (delta.row < 0 ? block.gridRow : block.gridRow + 1)
+      : block.gridRow;
+    const frontCol = axis === 'col'
+      ? (delta.col < 0 ? block.gridCol : block.gridCol + 1)
+      : block.gridCol;
+
+    let nearest = Infinity;
+    let hasBlock = false;
+
+    for (let other of allBlocks) {
+      if (other === block) continue;
+      if (other.isRemoved) continue;
+      if (other.visible === false) continue;
+
+      const cells = this.getBlockCells(other);
+      if (!cells) continue;
+
+      for (const cell of cells) {
+        if (axis === 'row') {
+          if (cell.col !== laneCol) continue;
+          const deltaRow = cell.row - frontRow;
+          if (delta.row < 0) {
+            if (deltaRow <= 0) {
+              const steps = -deltaRow - 1;
+              if (steps < nearest) {
+                nearest = steps;
+                hasBlock = true;
+              }
+            }
+          } else {
+            if (deltaRow >= 0) {
+              const steps = deltaRow - 1;
+              if (steps < nearest) {
+                nearest = steps;
+                hasBlock = true;
+              }
+            }
+          }
+        } else {
+          if (cell.row !== laneRow) continue;
+          const deltaCol = cell.col - frontCol;
+          if (delta.col < 0) {
+            if (deltaCol <= 0) {
+              const steps = -deltaCol - 1;
+              if (steps < nearest) {
+                nearest = steps;
+                hasBlock = true;
+              }
+            }
+          } else {
+            if (deltaCol >= 0) {
+              const steps = deltaCol - 1;
+              if (steps < nearest) {
+                nearest = steps;
+                hasBlock = true;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (!hasBlock) {
+      return { hasBlock: false, steps: 0, deltaRow: delta.row, deltaCol: delta.col };
+    }
+
+    return {
+      hasBlock: true,
+      steps: Math.max(0, nearest),
+      deltaRow: delta.row,
+      deltaCol: delta.col
+    };
+  },
+
+  getBlockAxis(block) {
+    if (block.axis === 'row' || block.axis === 'col') return block.axis;
+    if (block.direction === DIRECTIONS.UP || block.direction === DIRECTIONS.DOWN) return 'row';
+    if (block.direction === DIRECTIONS.LEFT || block.direction === DIRECTIONS.RIGHT) return 'col';
+    return null;
+  },
+
+  getBlockCells(block) {
+    if (!Number.isFinite(block.gridRow) || !Number.isFinite(block.gridCol)) return null;
+    const axis = this.getBlockAxis(block);
+    if (axis === 'row') {
+      return [
+        { row: block.gridRow, col: block.gridCol },
+        { row: block.gridRow + 1, col: block.gridCol }
+      ];
+    }
+    if (axis === 'col') {
+      return [
+        { row: block.gridRow, col: block.gridCol },
+        { row: block.gridRow, col: block.gridCol + 1 }
+      ];
+    }
+    return null;
+  },
+
+  getGridDirectionDelta(direction) {
+    switch (direction) {
+      case DIRECTIONS.UP: return { row: -1, col: 0 };
+      case DIRECTIONS.DOWN: return { row: 1, col: 0 };
+      case DIRECTIONS.LEFT: return { row: 0, col: -1 };
+      case DIRECTIONS.RIGHT: return { row: 0, col: 1 };
+      default: return null;
+    }
+  },
+
+  isOutOfBounds(x, y, screenWidth, screenHeight) {
+    return x < 0 || x > screenWidth || y < 0 || y > screenHeight;
+  },
+
+  pointInRect(x, y, rect) {
+    return x >= rect.x && x <= rect.x + rect.width &&
+           y >= rect.y && y <= rect.y + rect.height;
+  },
+
+  getHitRect(block) {
+    const ratio = BLOCK_SIZES.COLLISION_SHRINK || 0;
+    const ratioInset = Math.min(block.width, block.height) * ratio;
+    const inset = Math.max(BLOCK_SIZES.HITBOX_INSET || 0, ratioInset);
+    const width = Math.max(0, block.width - inset * 2);
+    const height = Math.max(0, block.height - inset * 2);
+    return {
+      x: block.x + inset,
+      y: block.y + inset,
+      width,
+      height
+    };
+  }
+};
+
+// ==================== 关卡生成器 ====================
+
+const LevelGenerator = {
+  ANIMAL_TYPES: MAIN_ANIMAL_TYPES,
+
+  getBlockDimensions(direction, shortSide) {
     const longSide = shortSide * (BLOCK_SIZES.LENGTH / BLOCK_SIZES.WIDTH);
-    // 方块本体固定为“水平胶囊”，再根据 direction 旋转（45°对角方向）
     const bodyW = longSide;
     const bodyH = shortSide;
 
@@ -31,47 +278,32 @@ export default class LevelGenerator {
       bodyW,
       bodyH,
       angle,
-      // 用旋转后的 AABB 做布局/碰撞
       width: bboxW,
       height: bboxH
     };
-  }
+  },
 
-  /**
-   * 对角线方向对应的旋转角（与 Block.js 保持一致）
-   */
-  static getDirectionAngle(direction) {
+  getDirectionAngle(direction) {
     switch (direction) {
-      case DIRECTIONS.UP:    // 右上（NE）
-        return -Math.PI / 4;
-      case DIRECTIONS.RIGHT: // 右下（SE）
-        return Math.PI / 4;
-      case DIRECTIONS.DOWN:  // 左下（SW）
-        return (3 * Math.PI) / 4;
-      case DIRECTIONS.LEFT:  // 左上（NW）
-        return (-3 * Math.PI) / 4;
-      default:
-        return -Math.PI / 4;
+      case DIRECTIONS.UP: return -Math.PI / 4;
+      case DIRECTIONS.RIGHT: return Math.PI / 4;
+      case DIRECTIONS.DOWN: return (3 * Math.PI) / 4;
+      case DIRECTIONS.LEFT: return (-3 * Math.PI) / 4;
+      default: return -Math.PI / 4;
     }
-  }
+  },
 
-  static getSeed(levelNumber, attempt) {
+  getSeed(levelNumber, attempt) {
     return (levelNumber + 1) * 10007 + attempt * 97;
-  }
+  },
 
-  /**
-   * 生成关卡（主入口）
-   * 保持完整验证次数确保可靠性，性能问题通过 Worker 解决
-   */
-  static generate(levelNumber, screenWidth, screenHeight) {
+  generate(levelNumber, screenWidth, screenHeight) {
     const params = this.getDifficultyParams(levelNumber);
     const boardRect = getBoardRect(screenWidth, screenHeight);
 
-    console.log(`[LevelGenerator] 生成关卡 ${levelNumber}, 目标方块数: ${params.blockCount}`);
-
     let lastBlocks = [];
-    const maxAttempts = 6; // 恢复为 6 次尝试，确保可靠性
-    
+    const maxAttempts = 6;
+
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const seed = this.getSeed(levelNumber, attempt);
       const blocks = this.generateRotatedGridDominoLayout(
@@ -83,78 +315,19 @@ export default class LevelGenerator {
       );
       lastBlocks = blocks;
 
-      // 快速预检：如果已知可解，直接返回
       if (blocks._solvable === true) {
-        console.log(`[LevelGenerator] 关卡 ${levelNumber} 生成成功（预判可解），方块数: ${blocks.length}，尝试: ${attempt + 1}`);
         return { blocks, total: blocks.length };
       }
 
-      // 使用原始验证方法
       if (this.validateLevel(blocks, screenWidth, screenHeight, seed)) {
-        console.log(`[LevelGenerator] 关卡 ${levelNumber} 生成成功，方块数: ${blocks.length}，尝试: ${attempt + 1}`);
         return { blocks, total: blocks.length };
       }
     }
 
-    console.warn(`[LevelGenerator] 关卡 ${levelNumber} 未通过验证，返回最后一次布局`);
     return { blocks: lastBlocks, total: lastBlocks.length };
-  }
-  
-  /**
-   * 快速验证关卡（用于预检）
-   * 利用 _solvable 缓存避免重复计算
-   */
-  static validateLevelFast(blocks, screenWidth, screenHeight, seed) {
-    // 检查重叠
-    if (this.hasOverlap(blocks)) {
-      return { valid: false, removableRatio: 0 };
-    }
+  },
 
-    // 归一化方块数据
-    const normalized = blocks.map(b => ({
-      ...b,
-      isRemoved: false,
-      visible: true
-    }));
-
-    // 计算可消除方块数
-    let removableCount = 0;
-    for (const block of normalized) {
-      if (!DirectionDetector.isBlocked(block, normalized, screenWidth, screenHeight, { debug: false })) {
-        removableCount++;
-      }
-    }
-
-    const removableRatio = blocks.length > 0 ? removableCount / blocks.length : 0;
-    const minRequired = Math.max(6, Math.floor(blocks.length * 0.15));
-    
-    if (removableCount < minRequired) {
-      return { valid: false, removableRatio };
-    }
-
-    // 如果预判结果存在，直接使用（避免重复计算）
-    const knownSolvable = blocks._solvable;
-    if (knownSolvable === true) {
-      return { valid: true, removableRatio };
-    }
-    if (knownSolvable === false) {
-      return { valid: false, removableRatio };
-    }
-
-    // 使用完整验证次数
-    const baseSeed = typeof seed === 'number' ? seed : 0;
-    const solvable = this.hasSolvablePath(normalized, screenWidth, screenHeight, baseSeed, 6);
-    return { valid: solvable, removableRatio };
-  }
-
-  /**
-   * 生成旋转网格 + 双格方块布局
-   * 规则：
-   * - 正方形网格生成格子，整体旋转45度
-   * - 每个动物占据两个相邻格子（头尾方向随机）
-   * - 格子之间保持固定间距
-   */
-  static generateRotatedGridDominoLayout(params, seed, screenWidth, screenHeight, boardRect) {
+  generateRotatedGridDominoLayout(params, seed, screenWidth, screenHeight, boardRect) {
     const blocks = [];
     const { blockCount, blockSize, outwardBias = 0.88, animalTypes = 5 } = params;
 
@@ -173,12 +346,7 @@ export default class LevelGenerator {
     const targetBlockCount = Math.min(blockCount, layout.maxBlocks);
     if (targetBlockCount <= 0 || layout.candidates.length < 2) return blocks;
 
-    const {
-      candidates,
-      safeBoardRect,
-      centerX,
-      centerY
-    } = layout;
+    const { candidates, safeBoardRect, centerX, centerY } = layout;
 
     const cellMap = new Map();
     candidates.forEach(cell => cellMap.set(cell.key, cell));
@@ -207,42 +375,21 @@ export default class LevelGenerator {
       const blockCenterX = (cell.x + neighbor.x) / 2;
       const blockCenterY = (cell.y + neighbor.y) / 2;
       const direction = this.pickDirectionForPair(
-        cell,
-        neighbor,
-        blockCenterX,
-        blockCenterY,
-        centerX,
-        centerY,
-        rand,
-        outwardBias
+        cell, neighbor, blockCenterX, blockCenterY, centerX, centerY, rand, outwardBias
       );
 
       const { width: bw, height: bh } = this.getBlockDimensions(direction, shortSide);
       const blockX = blockCenterX - bw / 2;
       const blockY = blockCenterY - bh / 2;
 
-      if (!this.isBlockInsideSafeRect(blockX, blockY, bw, bh, safeBoardRect)) {
-        continue;
-      }
+      if (!this.isBlockInsideSafeRect(blockX, blockY, bw, bh, safeBoardRect)) continue;
+      if (this.wouldOverlap(blockX, blockY, bw, bh, blocks, overlapMargin)) continue;
 
-      if (this.wouldOverlap(blockX, blockY, bw, bh, blocks, overlapMargin)) {
-        continue;
-      }
-
-      // 使用参数控制的动物种类数
       const usedAnimalTypes = this.ANIMAL_TYPES.slice(0, animalTypes);
       const animalType = usedAnimalTypes[blocks.length % usedAnimalTypes.length];
       blocks.push({
-        x: blockX,
-        y: blockY,
-        width: bw,
-        height: bh,
-        direction,
-        axis,
-        gridRow,
-        gridCol,
-        type: animalType,
-        size: shortSide
+        x: blockX, y: blockY, width: bw, height: bh,
+        direction, axis, gridRow, gridCol, type: animalType, size: shortSide
       });
 
       used.add(cell.key);
@@ -250,7 +397,7 @@ export default class LevelGenerator {
       placed++;
     }
 
-    // 二次补充：随机顺序再尝试填充，尽量接近目标数量
+    // 二次补充
     if (placed < targetBlockCount) {
       const shuffled = [...candidates];
       this.shuffleArray(shuffled, rand);
@@ -268,41 +415,20 @@ export default class LevelGenerator {
         const blockCenterX = (cell.x + neighbor.x) / 2;
         const blockCenterY = (cell.y + neighbor.y) / 2;
         const direction = this.pickDirectionForPair(
-          cell,
-          neighbor,
-          blockCenterX,
-          blockCenterY,
-          centerX,
-          centerY,
-          rand,
-          outwardBias
+          cell, neighbor, blockCenterX, blockCenterY, centerX, centerY, rand, outwardBias
         );
         const { width: bw, height: bh } = this.getBlockDimensions(direction, shortSide);
         const blockX = blockCenterX - bw / 2;
         const blockY = blockCenterY - bh / 2;
 
-        if (!this.isBlockInsideSafeRect(blockX, blockY, bw, bh, safeBoardRect)) {
-          continue;
-        }
+        if (!this.isBlockInsideSafeRect(blockX, blockY, bw, bh, safeBoardRect)) continue;
+        if (this.wouldOverlap(blockX, blockY, bw, bh, blocks, overlapMargin)) continue;
 
-        if (this.wouldOverlap(blockX, blockY, bw, bh, blocks, overlapMargin)) {
-          continue;
-        }
-
-        // 使用参数控制的动物种类数
         const usedAnimalTypes = this.ANIMAL_TYPES.slice(0, animalTypes);
         const animalType = usedAnimalTypes[blocks.length % usedAnimalTypes.length];
         blocks.push({
-          x: blockX,
-          y: blockY,
-          width: bw,
-          height: bh,
-          direction,
-          axis,
-          gridRow,
-          gridCol,
-          type: animalType,
-          size: shortSide
+          x: blockX, y: blockY, width: bw, height: bh,
+          direction, axis, gridRow, gridCol, type: animalType, size: shortSide
         });
 
         used.add(cell.key);
@@ -311,27 +437,15 @@ export default class LevelGenerator {
       }
     }
 
-    // 使用 initialRemovableRatio 参数
     const initialRemovableRatio = params.initialRemovableRatio || 0.20;
     this.ensureRemovableBlocks(blocks, screenWidth, screenHeight, centerX, centerY, shortSide, initialRemovableRatio);
-    const solvable = this.ensureSolvablePath(
-      blocks,
-      screenWidth,
-      screenHeight,
-      centerX,
-      centerY,
-      shortSide,
-      seed
-    );
+    const solvable = this.ensureSolvablePath(blocks, screenWidth, screenHeight, centerX, centerY, shortSide, seed);
     blocks._solvable = solvable;
 
     return blocks;
-  }
+  },
 
-  /**
-   * 生成可复现随机数（mulberry32）
-   */
-  static createSeededRandom(seed) {
+  createSeededRandom(seed) {
     let t = (seed >>> 0) + 0x6D2B79F5;
     return function() {
       t += 0x6D2B79F5;
@@ -339,19 +453,16 @@ export default class LevelGenerator {
       x ^= x + Math.imul(x ^ (x >>> 7), 61 | x);
       return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
     };
-  }
+  },
 
-  /**
-   * 洗牌（支持注入随机函数，保证可复现）
-   */
-  static shuffleArray(arr, rand = Math.random) {
+  shuffleArray(arr, rand = Math.random) {
     for (let i = arr.length - 1; i > 0; i--) {
       const j = Math.floor(rand() * (i + 1));
       [arr[i], arr[j]] = [arr[j], arr[i]];
     }
-  }
+  },
 
-  static computeDominoGridLayout(shortSide, holeRate, boardRect) {
+  computeDominoGridLayout(shortSide, holeRate, boardRect) {
     const longSide = shortSide * (BLOCK_SIZES.LENGTH / BLOCK_SIZES.WIDTH);
     const baseGap = Math.max(4, Math.round(shortSide * 0.35));
     const cellGap = Math.max(baseGap, Math.round(longSide - 2 * shortSide));
@@ -374,10 +485,8 @@ export default class LevelGenerator {
           const x = centerX + (col - row) * step;
           const y = centerY + (col + row) * step;
 
-          if (x < safeBoardRect.x ||
-              x > safeBoardRect.x + safeBoardRect.width ||
-              y < safeBoardRect.y ||
-              y > safeBoardRect.y + safeBoardRect.height) {
+          if (x < safeBoardRect.x || x > safeBoardRect.x + safeBoardRect.width ||
+              y < safeBoardRect.y || y > safeBoardRect.y + safeBoardRect.height) {
             continue;
           }
 
@@ -390,19 +499,10 @@ export default class LevelGenerator {
 
     const maxBlocks = Math.floor((candidates.length * (1 - holeRate)) / 2);
 
-    return {
-      candidates,
-      maxBlocks,
-      cellGap,
-      cellStep,
-      step,
-      safeBoardRect,
-      centerX,
-      centerY
-    };
-  }
+    return { candidates, maxBlocks, cellGap, cellStep, step, safeBoardRect, centerX, centerY };
+  },
 
-  static getSafeBoardRect(boardRect, halfW, halfH) {
+  getSafeBoardRect(boardRect, halfW, halfH) {
     const renderMargin = BLOCK_SIZES.RENDER_MARGIN || 0;
     const safeMarginX = BLOCK_SIZES.SAFETY_MARGIN + halfW + renderMargin;
     const safeMarginY = BLOCK_SIZES.SAFETY_MARGIN + halfH + renderMargin;
@@ -412,9 +512,9 @@ export default class LevelGenerator {
       width: Math.max(0, boardRect.width - safeMarginX * 2),
       height: Math.max(0, boardRect.height - safeMarginY * 2)
     };
-  }
+  },
 
-  static orderCandidatesCenterOut(candidates, rand) {
+  orderCandidatesCenterOut(candidates, rand) {
     const buckets = new Map();
     candidates.forEach(pos => {
       const key = pos.dist;
@@ -431,17 +531,17 @@ export default class LevelGenerator {
     });
 
     return ordered;
-  }
+  },
 
-  static pickHoleRate(params, rand) {
+  pickHoleRate(params, rand) {
     const range = params.holeRateRange || [0.12, 0.2];
     const min = Math.min(range[0], range[1]);
     const max = Math.max(range[0], range[1]);
     const rate = min + (max - min) * rand();
     return Math.max(0.05, Math.min(0.5, rate));
-  }
+  },
 
-  static selectSparseHoles(candidates, holeCount, rand) {
+  selectSparseHoles(candidates, holeCount, rand) {
     if (holeCount <= 0) return new Set();
 
     const holes = new Set();
@@ -466,18 +566,18 @@ export default class LevelGenerator {
     }
 
     return holes;
-  }
+  },
 
-  static getNeighborKeys(cell) {
+  getNeighborKeys(cell) {
     return [
       `${cell.row - 1},${cell.col}`,
       `${cell.row + 1},${cell.col}`,
       `${cell.row},${cell.col - 1}`,
       `${cell.row},${cell.col + 1}`
     ];
-  }
+  },
 
-  static getAvailableNeighbors(cell, cellMap, used) {
+  getAvailableNeighbors(cell, cellMap, used) {
     const neighbors = [];
     const keys = this.getNeighborKeys(cell);
     for (const key of keys) {
@@ -486,70 +586,47 @@ export default class LevelGenerator {
       if (neighbor) neighbors.push(neighbor);
     }
     return neighbors;
-  }
+  },
 
-  /**
-   * 为方块对选择方向
-   * @param {Object} cell - 当前格子
-   * @param {Object} neighbor - 邻居格子
-   * @param {number} blockCenterX - 方块中心X
-   * @param {number} blockCenterY - 方块中心Y
-   * @param {number} centerX - 棋盘中心X
-   * @param {number} centerY - 棋盘中心Y
-   * @param {Function} rand - 随机函数
-   * @param {number} outwardBias - 朝外偏好 (0-1)，越高越倾向于朝外
-   */
-  static pickDirectionForPair(cell, neighbor, blockCenterX, blockCenterY, centerX, centerY, rand, outwardBias = 0.88) {
+  pickDirectionForPair(cell, neighbor, blockCenterX, blockCenterY, centerX, centerY, rand, outwardBias = 0.88) {
     const dx = blockCenterX - centerX;
     const dy = blockCenterY - centerY;
     let preferred;
 
     if (neighbor.col !== cell.col) {
-      // col+1 方向对应屏幕 SE，col-1 对应 NW
       const score = dx + dy;
       preferred = score >= 0 ? DIRECTIONS.RIGHT : DIRECTIONS.LEFT;
     } else {
-      // row+1 方向对应屏幕 SW，row-1 对应 NE
       const score = dx - dy;
       preferred = score >= 0 ? DIRECTIONS.UP : DIRECTIONS.DOWN;
     }
 
-    // 使用 outwardBias 控制朝外概率
-    // outwardBias = 0.88 意味着 88% 概率朝外，12% 概率朝内
     if (rand() >= outwardBias) return this.getOppositeDirection(preferred);
     return preferred;
-  }
+  },
 
-  static getAxisDirections(block) {
-    if (block.axis === 'row') {
-      return [DIRECTIONS.UP, DIRECTIONS.DOWN];
-    }
-    if (block.axis === 'col') {
-      return [DIRECTIONS.LEFT, DIRECTIONS.RIGHT];
-    }
+  getAxisDirections(block) {
+    if (block.axis === 'row') return [DIRECTIONS.UP, DIRECTIONS.DOWN];
+    if (block.axis === 'col') return [DIRECTIONS.LEFT, DIRECTIONS.RIGHT];
     return [DIRECTIONS.UP, DIRECTIONS.RIGHT, DIRECTIONS.DOWN, DIRECTIONS.LEFT];
-  }
+  },
 
-  static pickOutwardDirectionForAxis(block, centerX, centerY) {
+  pickOutwardDirectionForAxis(block, centerX, centerY) {
     const cx = block.x + block.width / 2;
     const cy = block.y + block.height / 2;
     const dx = cx - centerX;
     const dy = cy - centerY;
 
-    if (block.axis === 'col') {
-      return (dx + dy) >= 0 ? DIRECTIONS.RIGHT : DIRECTIONS.LEFT;
-    }
-    if (block.axis === 'row') {
-      return (dx - dy) >= 0 ? DIRECTIONS.UP : DIRECTIONS.DOWN;
-    }
+    if (block.axis === 'col') return (dx + dy) >= 0 ? DIRECTIONS.RIGHT : DIRECTIONS.LEFT;
+    if (block.axis === 'row') return (dx - dy) >= 0 ? DIRECTIONS.UP : DIRECTIONS.DOWN;
 
     if (dx >= 0 && dy <= 0) return DIRECTIONS.UP;
     if (dx >= 0 && dy >= 0) return DIRECTIONS.RIGHT;
     if (dx <= 0 && dy >= 0) return DIRECTIONS.DOWN;
     return DIRECTIONS.LEFT;
-  }
+  },
 
-  static setBlockDirection(block, direction, shortSide) {
+  setBlockDirection(block, direction, shortSide) {
     const { width: bw, height: bh } = this.getBlockDimensions(direction, shortSide);
     const cx = block.x + block.width / 2;
     const cy = block.y + block.height / 2;
@@ -558,27 +635,23 @@ export default class LevelGenerator {
     block.height = bh;
     block.x = cx - bw / 2;
     block.y = cy - bh / 2;
-  }
+  },
 
-  static wouldBeBlockedWithDirection(block, direction, shortSide, blocks, screenWidth, screenHeight) {
+  wouldBeBlockedWithDirection(block, direction, shortSide, blocks, screenWidth, screenHeight) {
     const { width: bw, height: bh } = this.getBlockDimensions(direction, shortSide);
     const cx = block.x + block.width / 2;
     const cy = block.y + block.height / 2;
     const temp = {
       ...block,
-      direction,
-      width: bw,
-      height: bh,
-      x: cx - bw / 2,
-      y: cy - bh / 2,
-      isRemoved: false,
-      visible: true
+      direction, width: bw, height: bh,
+      x: cx - bw / 2, y: cy - bh / 2,
+      isRemoved: false, visible: true
     };
     const tempBlocks = blocks.map(b => (b === block ? temp : b));
     return DirectionDetector.isBlocked(temp, tempBlocks, screenWidth, screenHeight, { debug: false });
-  }
+  },
 
-  static pickUnblockedDirection(block, blocks, screenWidth, screenHeight, centerX, centerY, shortSide) {
+  pickUnblockedDirection(block, blocks, screenWidth, screenHeight, centerX, centerY, shortSide) {
     const preferred = this.pickOutwardDirectionForAxis(block, centerX, centerY);
     const alternate = this.getOppositeDirection(preferred);
     const candidates = [preferred, alternate];
@@ -597,31 +670,24 @@ export default class LevelGenerator {
     }
 
     return preferred;
-  }
+  },
 
-  static getOppositeDirection(direction) {
+  getOppositeDirection(direction) {
     switch (direction) {
-      case DIRECTIONS.UP:
-        return DIRECTIONS.DOWN;
-      case DIRECTIONS.DOWN:
-        return DIRECTIONS.UP;
-      case DIRECTIONS.LEFT:
-        return DIRECTIONS.RIGHT;
-      case DIRECTIONS.RIGHT:
-        return DIRECTIONS.LEFT;
-      default:
-        return DIRECTIONS.UP;
+      case DIRECTIONS.UP: return DIRECTIONS.DOWN;
+      case DIRECTIONS.DOWN: return DIRECTIONS.UP;
+      case DIRECTIONS.LEFT: return DIRECTIONS.RIGHT;
+      case DIRECTIONS.RIGHT: return DIRECTIONS.LEFT;
+      default: return DIRECTIONS.UP;
     }
-  }
+  },
 
-  static isBlockInsideSafeRect(x, y, width, height, safeRect) {
-    return x >= safeRect.x &&
-      x + width <= safeRect.x + safeRect.width &&
-      y >= safeRect.y &&
-      y + height <= safeRect.y + safeRect.height;
-  }
+  isBlockInsideSafeRect(x, y, width, height, safeRect) {
+    return x >= safeRect.x && x + width <= safeRect.x + safeRect.width &&
+           y >= safeRect.y && y + height <= safeRect.y + safeRect.height;
+  },
 
-  static wouldOverlap(x, y, width, height, blocks, margin = 1) {
+  wouldOverlap(x, y, width, height, blocks, margin = 1) {
     for (const b of blocks) {
       if (x + margin < b.x + b.width - margin &&
           x + width - margin > b.x + margin &&
@@ -631,13 +697,9 @@ export default class LevelGenerator {
       }
     }
     return false;
-  }
+  },
 
-  /**
-   * 确保有足够的可消除方块
-   * @param {number} initialRemovableRatio - 初始可消除比例 (0-1)
-   */
-  static ensureRemovableBlocks(blocks, screenWidth, screenHeight, centerX, centerY, shortSide, initialRemovableRatio = 0.20) {
+  ensureRemovableBlocks(blocks, screenWidth, screenHeight, centerX, centerY, shortSide, initialRemovableRatio = 0.20) {
     const minRemovable = Math.max(6, Math.floor(blocks.length * initialRemovableRatio));
 
     for (let fix = 0; fix < 5; fix++) {
@@ -648,28 +710,18 @@ export default class LevelGenerator {
         }
       });
 
-      if (removableCount >= minRemovable) {
-        console.log(`[LevelGenerator] 可消除方块数: ${removableCount}/${blocks.length}`);
-        return;
-      }
+      if (removableCount >= minRemovable) return;
 
       const adjusted = this.relaxBlockedDirections(
-        blocks,
-        screenWidth,
-        screenHeight,
-        centerX,
-        centerY,
-        shortSide,
+        blocks, screenWidth, screenHeight, centerX, centerY, shortSide,
         Math.ceil(blocks.length * 0.25)
       );
 
-      if (!adjusted) {
-        break;
-      }
+      if (!adjusted) break;
     }
-  }
+  },
 
-  static relaxBlockedDirections(blocks, screenWidth, screenHeight, centerX, centerY, shortSide, limit) {
+  relaxBlockedDirections(blocks, screenWidth, screenHeight, centerX, centerY, shortSide, limit) {
     const blocked = [];
 
     blocks.forEach((block, idx) => {
@@ -690,13 +742,7 @@ export default class LevelGenerator {
     for (let i = 0; i < adjustCount; i++) {
       const block = blocks[blocked[i].idx];
       const nextDirection = this.pickUnblockedDirection(
-        block,
-        blocks,
-        screenWidth,
-        screenHeight,
-        centerX,
-        centerY,
-        shortSide
+        block, blocks, screenWidth, screenHeight, centerX, centerY, shortSide
       );
       if (nextDirection !== block.direction) {
         this.setBlockDirection(block, nextDirection, shortSide);
@@ -705,51 +751,35 @@ export default class LevelGenerator {
     }
 
     return changed;
-  }
+  },
 
-  /**
-   * 确保关卡有可解路径
-   * 恢复完整验证次数确保可靠性
-   */
-  static ensureSolvablePath(blocks, screenWidth, screenHeight, centerX, centerY, shortSide, seed) {
+  ensureSolvablePath(blocks, screenWidth, screenHeight, centerX, centerY, shortSide, seed) {
     const baseSeed = typeof seed === 'number' ? seed : 0;
-    const maxFixRounds = 4; // 恢复为 4 轮修复
-    const attempts = 6;     // 恢复为 6 次尝试
+    const maxFixRounds = 4;
+    const attempts = 6;
 
     for (let round = 0; round < maxFixRounds; round++) {
       if (this.hasSolvablePath(blocks, screenWidth, screenHeight, baseSeed + round * 131, attempts)) {
         return true;
       }
       const adjusted = this.relaxBlockedDirections(
-        blocks,
-        screenWidth,
-        screenHeight,
-        centerX,
-        centerY,
-        shortSide,
+        blocks, screenWidth, screenHeight, centerX, centerY, shortSide,
         Math.ceil(blocks.length * 0.2)
       );
       if (!adjusted) break;
     }
 
-    // 最后一次检查
     return this.hasSolvablePath(blocks, screenWidth, screenHeight, baseSeed + 777, attempts + 2);
-  }
+  },
 
-  /**
-   * 检查是否有可解路径
-   * 恢复完整验证次数确保可靠性
-   */
-  static hasSolvablePath(blocks, screenWidth, screenHeight, seed, attempts = 6) {
+  hasSolvablePath(blocks, screenWidth, screenHeight, seed, attempts = 6) {
     const total = blocks.length;
     if (total === 0) return true;
 
     for (let attempt = 0; attempt < attempts; attempt++) {
       const rand = this.createSeededRandom(seed + attempt * 97 + 11);
       const working = blocks.map(block => ({
-        ...block,
-        isRemoved: false,
-        visible: true
+        ...block, isRemoved: false, visible: true
       }));
 
       let removed = 0;
@@ -769,31 +799,19 @@ export default class LevelGenerator {
         removed++;
       }
 
-      // 早期返回：一旦找到可解路径就立即返回
       if (removed === total) return true;
     }
 
     return false;
-  }
+  },
 
-  /**
-   * 验证关卡可解性
-   */
-  static validateLevel(blocks, screenWidth, screenHeight, seed) {
-    // 检查重叠
-    if (this.hasOverlap(blocks)) {
-      console.log('[LevelGenerator] 验证失败：方块重叠');
-      return false;
-    }
+  validateLevel(blocks, screenWidth, screenHeight, seed) {
+    if (this.hasOverlap(blocks)) return false;
 
-    // 归一化方块数据
     const normalized = blocks.map(b => ({
-      ...b,
-      isRemoved: false,
-      visible: true
+      ...b, isRemoved: false, visible: true
     }));
 
-    // 计算可消除方块数
     let removableCount = 0;
     for (const block of normalized) {
       if (!DirectionDetector.isBlocked(block, normalized, screenWidth, screenHeight, { debug: false })) {
@@ -802,39 +820,21 @@ export default class LevelGenerator {
     }
 
     const minRequired = Math.max(6, Math.floor(blocks.length * 0.15));
-    const isValid = removableCount >= minRequired;
-    if (!isValid) {
-      console.log(`[LevelGenerator] 验证: 可消除 ${removableCount}/${blocks.length}, 最低要求 ${minRequired}, 结果: false`);
-      return false;
-    }
+    if (removableCount < minRequired) return false;
 
     const knownSolvable = blocks._solvable;
-    if (knownSolvable === false) {
-      console.log('[LevelGenerator] 验证: 预判不可解');
-      return false;
-    }
-
-    if (knownSolvable === true) {
-      console.log(`[LevelGenerator] 验证: 可消除 ${removableCount}/${blocks.length}, 最低要求 ${minRequired}, 可解: true`);
-      return true;
-    }
+    if (knownSolvable === false) return false;
+    if (knownSolvable === true) return true;
 
     const baseSeed = typeof seed === 'number' ? seed : 0;
-    const solvable = this.hasSolvablePath(normalized, screenWidth, screenHeight, baseSeed, 6);
-    console.log(`[LevelGenerator] 验证: 可消除 ${removableCount}/${blocks.length}, 最低要求 ${minRequired}, 可解: ${solvable}`);
-    return solvable;
-  }
+    return this.hasSolvablePath(normalized, screenWidth, screenHeight, baseSeed, 6);
+  },
 
-  /**
-   * 检查方块是否重叠
-   */
-  static hasOverlap(blocks) {
+  hasOverlap(blocks) {
     for (let i = 0; i < blocks.length; i++) {
       for (let j = i + 1; j < blocks.length; j++) {
         const a = blocks[i];
         const b = blocks[j];
-
-        // AABB碰撞检测（允许一定内缩，减少旋转AABB误判）
         const margin = Math.max(1, BLOCK_SIZES.HITBOX_INSET || 0);
         if (a.x + margin < b.x + b.width - margin &&
             a.x + a.width - margin > b.x + margin &&
@@ -845,30 +845,21 @@ export default class LevelGenerator {
       }
     }
     return false;
-  }
+  },
 
   /**
-   * 获取难度参数（锯齿曲线 + 多维度）
-   * 
-   * 阶段划分（直接从成长期开始，无新手期）：
-   * - 成长期 (1-15): 入门挑战，需要思考
-   * - 挑战期 (16-35): 真正考验，阻挡增多
-   * - 大师期 (36-60): 高手领域，极限挑战
-   * - 传奇期 (61+): 终极难度
-   * 
-   * 锯齿波动：每5关一个周期，第5关是"休息关"
-   * 方块尺寸固定，只通过数量、阻挡程度、可消除比例调整难度
+   * 获取难度参数（锯齿曲线 + 多维度，固定尺寸）
    */
-  static getDifficultyParams(level) {
-    // 固定方块尺寸（所有关卡一致）
+  getDifficultyParams(level) {
+    // 固定方块尺寸
     const BLOCK_SIZE = 16;
     
-    // 阶段定义（无新手期，直接从成长期开始）
+    // 阶段定义（无新手期）
     const phases = [
-      { maxLevel: 15, name: '成长期', blockCount: [100, 140], removableRatio: [0.22, 0.28], outwardBias: 0.82, animalTypes: 4 },
-      { maxLevel: 35, name: '挑战期', blockCount: [140, 175], removableRatio: [0.18, 0.22], outwardBias: 0.72, animalTypes: 5 },
-      { maxLevel: 60, name: '大师期', blockCount: [175, 200], removableRatio: [0.15, 0.18], outwardBias: 0.62, animalTypes: 5 },
-      { maxLevel: Infinity, name: '传奇期', blockCount: [200, 220], removableRatio: [0.12, 0.15], outwardBias: 0.55, animalTypes: 5 }
+      { maxLevel: 15, blockCount: [100, 140], removableRatio: [0.22, 0.28], outwardBias: 0.82, animalTypes: 4 },
+      { maxLevel: 35, blockCount: [140, 175], removableRatio: [0.18, 0.22], outwardBias: 0.72, animalTypes: 5 },
+      { maxLevel: 60, blockCount: [175, 200], removableRatio: [0.15, 0.18], outwardBias: 0.62, animalTypes: 5 },
+      { maxLevel: Infinity, blockCount: [200, 220], removableRatio: [0.12, 0.15], outwardBias: 0.55, animalTypes: 5 }
     ];
 
     // 找到当前阶段
@@ -882,39 +873,34 @@ export default class LevelGenerator {
       }
     }
 
-    // 计算阶段内进度 (0 ~ 1)
+    // 计算阶段内进度
     const phaseLength = phase.maxLevel === Infinity ? 40 : phase.maxLevel - phaseStartLevel + 1;
     const levelInPhase = level - phaseStartLevel;
     const phaseProgress = Math.min(1, levelInPhase / phaseLength);
 
-    // 锯齿波动：每5关一个周期
+    // 锯齿波动
     const cycleLength = 5;
-    const cyclePosition = (level - 1) % cycleLength; // 0, 1, 2, 3, 4
-    const isReliefLevel = cyclePosition === cycleLength - 1; // 第5关是休息关
-    
-    // 锯齿调整系数
+    const cyclePosition = (level - 1) % cycleLength;
+    const isReliefLevel = cyclePosition === cycleLength - 1;
     let sawtoothFactor = isReliefLevel ? -0.12 : cyclePosition * 0.03;
 
-    // 计算方块数量（线性插值 + 锯齿）
-    const baseBlockCount = this.lerp(phase.blockCount[0], phase.blockCount[1], phaseProgress);
-    const blockCountAdjust = baseBlockCount * sawtoothFactor;
-    const blockCount = Math.round(Math.max(80, Math.min(220, baseBlockCount + blockCountAdjust)));
+    // 计算方块数量
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const baseBlockCount = lerp(phase.blockCount[0], phase.blockCount[1], phaseProgress);
+    const blockCount = Math.round(Math.max(80, Math.min(220, baseBlockCount + baseBlockCount * sawtoothFactor)));
 
-    // 计算可消除比例（锯齿调整：休息关更高，难关更低）
-    const baseRemovableRatio = this.lerp(phase.removableRatio[0], phase.removableRatio[1], 1 - phaseProgress);
+    // 计算可消除比例
+    const baseRemovableRatio = lerp(phase.removableRatio[0], phase.removableRatio[1], 1 - phaseProgress);
     const removableAdjust = isReliefLevel ? 0.06 : -cyclePosition * 0.012;
     const initialRemovableRatio = Math.max(0.10, Math.min(0.35, baseRemovableRatio + removableAdjust));
 
-    // 计算朝外偏好（锯齿调整：休息关更高，难关更低）
+    // 计算朝外偏好
     const outwardAdjust = isReliefLevel ? 0.08 : -cyclePosition * 0.015;
     const outwardBias = Math.max(0.45, Math.min(0.90, phase.outwardBias + outwardAdjust));
 
-    // 空洞率根据方块数量自适应（方块越多，空洞越少以保持密度）
+    // 空洞率
     const holeRateBase = blockCount > 170 ? 0.05 : blockCount > 140 ? 0.07 : 0.09;
     const holeRateRange = [holeRateBase, holeRateBase + 0.03];
-
-    // 动物种类数
-    const animalTypes = phase.animalTypes;
 
     return {
       blockCount,
@@ -922,16 +908,37 @@ export default class LevelGenerator {
       holeRateRange,
       initialRemovableRatio,
       outwardBias,
-      animalTypes,
-      isReliefLevel,
-      phaseName: phase.name
+      animalTypes: phase.animalTypes,
+      isReliefLevel
     };
   }
+};
 
-  /**
-   * 线性插值
-   */
-  static lerp(a, b, t) {
-    return a + (b - a) * t;
+// ==================== Worker 消息处理 ====================
+
+worker.onMessage(function(msg) {
+  if (msg.type === 'generate') {
+    const { levelNumber, screenWidth, screenHeight, requestId } = msg;
+    
+    try {
+      const startTime = Date.now();
+      const levelData = LevelGenerator.generate(levelNumber, screenWidth, screenHeight);
+      const duration = Date.now() - startTime;
+      
+      worker.postMessage({
+        type: 'levelReady',
+        requestId,
+        levelNumber,
+        levelData,
+        duration
+      });
+    } catch (error) {
+      worker.postMessage({
+        type: 'error',
+        requestId,
+        levelNumber,
+        error: error.message || 'Unknown error'
+      });
+    }
   }
-}
+});
