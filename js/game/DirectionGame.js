@@ -535,6 +535,31 @@ export default class DirectionGame {
   startLevel(levelNumber) {
     const databus = GameGlobal.databus;
 
+    // 检查关卡是否已预加载
+    const isPreloaded = this.levelManager.isPreloaded(levelNumber);
+    
+    if (!isPreloaded) {
+      // 关卡未预加载，显示加载提示后延迟执行
+      console.log(`[DirectionGame] 关卡 ${levelNumber} 未预加载，开始同步生成...`);
+      this.modalRenderer.showToast('关卡生成中...', 10000);
+      
+      // 延迟一帧让 UI 渲染加载提示
+      setTimeout(() => {
+        this._doStartLevel(levelNumber);
+        this.modalRenderer.hideToast();
+      }, 50);
+      return;
+    }
+
+    this._doStartLevel(levelNumber);
+  }
+
+  /**
+   * 实际执行开始关卡的逻辑
+   */
+  _doStartLevel(levelNumber) {
+    const databus = GameGlobal.databus;
+
     // 重置状态
     databus.reset();
 
@@ -641,10 +666,10 @@ export default class DirectionGame {
     this.audioManager.playBGM('playing');
 
     // 预加载后续关卡（通过 Worker 在后台执行，不阻塞主线程）
-    // 延迟一点再预加载，让当前关卡的掉落动画先播放
+    // 延迟 3 秒再预加载，等动画播放完成且游戏稳定后
     setTimeout(() => {
       this.levelManager.preloadLevels(levelNumber + 1);
-    }, 500);
+    }, 3000);
 
     console.log(`关卡 ${levelNumber} 开始，方块数量: ${databus.totalBlocks}`);
   }

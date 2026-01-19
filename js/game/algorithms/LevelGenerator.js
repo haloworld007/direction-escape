@@ -148,15 +148,16 @@ export default class LevelGenerator {
   }
 
   /**
-   * 生成旋转网格 + 双格方块布局
-   * 规则：
-   * - 正方形网格生成格子，整体旋转45度
-   * - 每个动物占据两个相邻格子（头尾方向随机）
-   * - 格子之间保持固定间距
+   * 生成旋转网格 + 双格方块布局（基于阻挡深度系统）
+   * 
+   * 新流程：
+   * 1. 生成方块位置（原有网格布局）
+   * 2. 使用阻挡深度系统分配方向
+   * 3. 验证可解性
    */
   static generateRotatedGridDominoLayout(params, seed, screenWidth, screenHeight, boardRect) {
     const blocks = [];
-    const { blockCount, blockSize, outwardBias = 0.88, animalTypes = 5 } = params;
+    const { blockCount, blockSize, animalTypes = 5 } = params;
 
     let shortSide = blockSize || BLOCK_SIZES.WIDTH;
     const minShortSide = 12;
@@ -192,6 +193,7 @@ export default class LevelGenerator {
     const used = new Set(holes);
     const ordered = this.orderCandidatesCenterOut(candidates, rand);
 
+    // 第一阶段：放置方块（先用临时方向）
     let placed = 0;
     for (const cell of ordered) {
       if (placed >= targetBlockCount) break;
@@ -206,18 +208,10 @@ export default class LevelGenerator {
       const gridCol = axis === 'col' ? Math.min(cell.col, neighbor.col) : cell.col;
       const blockCenterX = (cell.x + neighbor.x) / 2;
       const blockCenterY = (cell.y + neighbor.y) / 2;
-      const direction = this.pickDirectionForPair(
-        cell,
-        neighbor,
-        blockCenterX,
-        blockCenterY,
-        centerX,
-        centerY,
-        rand,
-        outwardBias
-      );
-
-      const { width: bw, height: bh } = this.getBlockDimensions(direction, shortSide);
+      
+      // 临时方向（后续会被 assignDirectionsByDepth 重新分配）
+      const tempDirection = DIRECTIONS.UP;
+      const { width: bw, height: bh } = this.getBlockDimensions(tempDirection, shortSide);
       const blockX = blockCenterX - bw / 2;
       const blockY = blockCenterY - bh / 2;
 
@@ -229,19 +223,16 @@ export default class LevelGenerator {
         continue;
       }
 
-      // 使用参数控制的动物种类数
-      const usedAnimalTypes = this.ANIMAL_TYPES.slice(0, animalTypes);
-      const animalType = usedAnimalTypes[blocks.length % usedAnimalTypes.length];
       blocks.push({
         x: blockX,
         y: blockY,
         width: bw,
         height: bh,
-        direction,
+        direction: tempDirection,
         axis,
         gridRow,
         gridCol,
-        type: animalType,
+        type: null, // 后续分配
         size: shortSide
       });
 
@@ -250,7 +241,7 @@ export default class LevelGenerator {
       placed++;
     }
 
-    // 二次补充：随机顺序再尝试填充，尽量接近目标数量
+    // 二次补充：随机顺序再尝试填充
     if (placed < targetBlockCount) {
       const shuffled = [...candidates];
       this.shuffleArray(shuffled, rand);
@@ -267,17 +258,9 @@ export default class LevelGenerator {
         const gridCol = axis === 'col' ? Math.min(cell.col, neighbor.col) : cell.col;
         const blockCenterX = (cell.x + neighbor.x) / 2;
         const blockCenterY = (cell.y + neighbor.y) / 2;
-        const direction = this.pickDirectionForPair(
-          cell,
-          neighbor,
-          blockCenterX,
-          blockCenterY,
-          centerX,
-          centerY,
-          rand,
-          outwardBias
-        );
-        const { width: bw, height: bh } = this.getBlockDimensions(direction, shortSide);
+        
+        const tempDirection = DIRECTIONS.UP;
+        const { width: bw, height: bh } = this.getBlockDimensions(tempDirection, shortSide);
         const blockX = blockCenterX - bw / 2;
         const blockY = blockCenterY - bh / 2;
 
@@ -289,19 +272,16 @@ export default class LevelGenerator {
           continue;
         }
 
-        // 使用参数控制的动物种类数
-        const usedAnimalTypes = this.ANIMAL_TYPES.slice(0, animalTypes);
-        const animalType = usedAnimalTypes[blocks.length % usedAnimalTypes.length];
         blocks.push({
           x: blockX,
           y: blockY,
           width: bw,
           height: bh,
-          direction,
+          direction: tempDirection,
           axis,
           gridRow,
           gridCol,
-          type: animalType,
+          type: null,
           size: shortSide
         });
 
@@ -311,9 +291,18 @@ export default class LevelGenerator {
       }
     }
 
-    // 使用 initialRemovableRatio 参数
-    const initialRemovableRatio = params.initialRemovableRatio || 0.20;
-    this.ensureRemovableBlocks(blocks, screenWidth, screenHeight, centerX, centerY, shortSide, initialRemovableRatio);
+    // 第二阶段：使用阻挡深度系统分配方向
+    this.assignDirectionsByDepth(blocks, params, screenWidth, screenHeight, centerX, centerY, shortSide, rand);
+
+    // 第三阶段：分配动物类型（打乱后均匀分配）
+    const usedAnimalTypes = this.ANIMAL_TYPES.slice(0, animalTypes);
+    const shuffledBlocks = [...blocks];
+    this.shuffleArray(shuffledBlocks, rand);
+    shuffledBlocks.forEach((block, i) => {
+      block.type = usedAnimalTypes[i % usedAnimalTypes.length];
+    });
+
+    // 第四阶段：验证可解性
     const solvable = this.ensureSolvablePath(
       blocks,
       screenWidth,
@@ -324,6 +313,10 @@ export default class LevelGenerator {
       seed
     );
     blocks._solvable = solvable;
+
+    // 输出深度统计
+    const depthInfo = this.calculateBlockDepths(blocks, screenWidth, screenHeight);
+    console.log(`[LevelGenerator] 最终深度: 平均=${depthInfo.avgDepth.toFixed(2)}, 最大=${depthInfo.maxDepth}, 方块数=${blocks.length}`);
 
     return blocks;
   }
@@ -848,27 +841,59 @@ export default class LevelGenerator {
   }
 
   /**
-   * 获取难度参数（锯齿曲线 + 多维度）
+   * 获取难度参数（基于阻挡深度系统）
    * 
    * 阶段划分（直接从成长期开始，无新手期）：
-   * - 成长期 (1-15): 入门挑战，需要思考
-   * - 挑战期 (16-35): 真正考验，阻挡增多
-   * - 大师期 (36-60): 高手领域，极限挑战
-   * - 传奇期 (61+): 终极难度
+   * - 成长期 (1-15): 单核心，浅层阻挡，平均深度 0.5-0.8
+   * - 挑战期 (16-35): 核心更深，平均深度 0.8-1.2
+   * - 大师期 (36-60): 双核心，平均深度 1.2-1.6
+   * - 传奇期 (61+): 多核心，复杂阻挡网，平均深度 1.6-2.0
    * 
    * 锯齿波动：每5关一个周期，第5关是"休息关"
-   * 方块尺寸固定，只通过数量、阻挡程度、可消除比例调整难度
+   * 难度由阻挡深度分布控制，而非简单的朝外概率
    */
   static getDifficultyParams(level) {
     // 固定方块尺寸（所有关卡一致）
     const BLOCK_SIZE = 16;
     
-    // 阶段定义（无新手期，直接从成长期开始）
+    // 阶段定义（基于阻挡深度）
     const phases = [
-      { maxLevel: 15, name: '成长期', blockCount: [100, 140], removableRatio: [0.22, 0.28], outwardBias: 0.82, animalTypes: 4 },
-      { maxLevel: 35, name: '挑战期', blockCount: [140, 175], removableRatio: [0.18, 0.22], outwardBias: 0.72, animalTypes: 5 },
-      { maxLevel: 60, name: '大师期', blockCount: [175, 200], removableRatio: [0.15, 0.18], outwardBias: 0.62, animalTypes: 5 },
-      { maxLevel: Infinity, name: '传奇期', blockCount: [200, 220], removableRatio: [0.12, 0.15], outwardBias: 0.55, animalTypes: 5 }
+      { 
+        maxLevel: 15, 
+        name: '成长期', 
+        blockCount: [100, 140], 
+        avgDepth: [0.5, 0.8],      // 平均阻挡深度
+        maxDepth: [2, 3],          // 最大阻挡深度
+        removableRatio: [0.30, 0.35], // 初始可消除比例
+        animalTypes: 4 
+      },
+      { 
+        maxLevel: 35, 
+        name: '挑战期', 
+        blockCount: [140, 175], 
+        avgDepth: [0.8, 1.2],
+        maxDepth: [3, 4],
+        removableRatio: [0.22, 0.28],
+        animalTypes: 5 
+      },
+      { 
+        maxLevel: 60, 
+        name: '大师期', 
+        blockCount: [175, 200], 
+        avgDepth: [1.2, 1.6],
+        maxDepth: [4, 5],
+        removableRatio: [0.16, 0.22],
+        animalTypes: 5 
+      },
+      { 
+        maxLevel: Infinity, 
+        name: '传奇期', 
+        blockCount: [200, 220], 
+        avgDepth: [1.6, 2.0],
+        maxDepth: [5, 6],
+        removableRatio: [0.12, 0.16],
+        animalTypes: 5 
+      }
     ];
 
     // 找到当前阶段
@@ -893,23 +918,29 @@ export default class LevelGenerator {
     const isReliefLevel = cyclePosition === cycleLength - 1; // 第5关是休息关
     
     // 锯齿调整系数
-    let sawtoothFactor = isReliefLevel ? -0.12 : cyclePosition * 0.03;
+    const sawtoothFactor = isReliefLevel ? -0.15 : cyclePosition * 0.04;
 
     // 计算方块数量（线性插值 + 锯齿）
     const baseBlockCount = this.lerp(phase.blockCount[0], phase.blockCount[1], phaseProgress);
     const blockCountAdjust = baseBlockCount * sawtoothFactor;
     const blockCount = Math.round(Math.max(80, Math.min(220, baseBlockCount + blockCountAdjust)));
 
-    // 计算可消除比例（锯齿调整：休息关更高，难关更低）
+    // 计算目标平均深度（锯齿调整：休息关深度更低）
+    const baseAvgDepth = this.lerp(phase.avgDepth[0], phase.avgDepth[1], phaseProgress);
+    const depthAdjust = isReliefLevel ? -0.2 : cyclePosition * 0.05;
+    const targetAvgDepth = Math.max(0.3, Math.min(2.5, baseAvgDepth + depthAdjust));
+
+    // 计算目标最大深度
+    const baseMaxDepth = this.lerp(phase.maxDepth[0], phase.maxDepth[1], phaseProgress);
+    const maxDepthAdjust = isReliefLevel ? -1 : Math.floor(cyclePosition * 0.3);
+    const targetMaxDepth = Math.max(2, Math.min(6, Math.round(baseMaxDepth + maxDepthAdjust)));
+
+    // 计算初始可消除比例（锯齿调整：休息关更高）
     const baseRemovableRatio = this.lerp(phase.removableRatio[0], phase.removableRatio[1], 1 - phaseProgress);
-    const removableAdjust = isReliefLevel ? 0.06 : -cyclePosition * 0.012;
-    const initialRemovableRatio = Math.max(0.10, Math.min(0.35, baseRemovableRatio + removableAdjust));
+    const removableAdjust = isReliefLevel ? 0.08 : -cyclePosition * 0.015;
+    const initialRemovableRatio = Math.max(0.10, Math.min(0.40, baseRemovableRatio + removableAdjust));
 
-    // 计算朝外偏好（锯齿调整：休息关更高，难关更低）
-    const outwardAdjust = isReliefLevel ? 0.08 : -cyclePosition * 0.015;
-    const outwardBias = Math.max(0.45, Math.min(0.90, phase.outwardBias + outwardAdjust));
-
-    // 空洞率根据方块数量自适应（方块越多，空洞越少以保持密度）
+    // 空洞率根据方块数量自适应
     const holeRateBase = blockCount > 170 ? 0.05 : blockCount > 140 ? 0.07 : 0.09;
     const holeRateRange = [holeRateBase, holeRateBase + 0.03];
 
@@ -921,7 +952,8 @@ export default class LevelGenerator {
       blockSize: BLOCK_SIZE,
       holeRateRange,
       initialRemovableRatio,
-      outwardBias,
+      targetAvgDepth,      // 新增：目标平均深度
+      targetMaxDepth,      // 新增：目标最大深度
       animalTypes,
       isReliefLevel,
       phaseName: phase.name
@@ -933,5 +965,267 @@ export default class LevelGenerator {
    */
   static lerp(a, b, t) {
     return a + (b - a) * t;
+  }
+
+  // ==================== 阻挡深度系统 ====================
+
+  /**
+   * 计算所有方块的阻挡深度
+   * 深度定义：消除该方块前需要先消除多少个阻挡它的方块
+   * - 深度0：直接可消（无阻挡）
+   * - 深度1：被1个方块阻挡
+   * - 深度N：需要解N层才能消除
+   */
+  static calculateBlockDepths(blocks, screenWidth, screenHeight) {
+    const n = blocks.length;
+    if (n === 0) return { depths: [], avgDepth: 0, maxDepth: 0 };
+
+    // 初始化：所有方块深度未知(-1)
+    const depths = new Array(n).fill(-1);
+    const working = blocks.map(b => ({ ...b, isRemoved: false, visible: true }));
+
+    // BFS计算深度：每轮找出当前可消除的方块，标记深度
+    let currentDepth = 0;
+    let remaining = n;
+    
+    while (remaining > 0) {
+      const removableIndices = [];
+      
+      for (let i = 0; i < n; i++) {
+        if (depths[i] !== -1) continue; // 已计算
+        if (working[i].isRemoved) continue;
+        
+        if (!DirectionDetector.isBlocked(working[i], working, screenWidth, screenHeight, { debug: false })) {
+          removableIndices.push(i);
+        }
+      }
+
+      if (removableIndices.length === 0) {
+        // 剩余方块无法消除（死局），标记为最大深度+1
+        for (let i = 0; i < n; i++) {
+          if (depths[i] === -1) {
+            depths[i] = currentDepth + 1;
+          }
+        }
+        break;
+      }
+
+      // 标记这批方块的深度
+      for (const idx of removableIndices) {
+        depths[idx] = currentDepth;
+        working[idx].isRemoved = true;
+        remaining--;
+      }
+
+      currentDepth++;
+    }
+
+    // 计算统计数据
+    const validDepths = depths.filter(d => d >= 0);
+    const avgDepth = validDepths.length > 0 
+      ? validDepths.reduce((a, b) => a + b, 0) / validDepths.length 
+      : 0;
+    const maxDepth = Math.max(...validDepths, 0);
+
+    return { depths, avgDepth, maxDepth };
+  }
+
+  /**
+   * 基于阻挡深度分配方向
+   * 核心策略：
+   * 1. 按距离中心排序，划分核心区/中间区/边缘区
+   * 2. 边缘区朝外（可直接消除）
+   * 3. 核心区构建多层阻挡结构
+   * 4. 验证并调整以满足目标深度分布
+   */
+  static assignDirectionsByDepth(blocks, params, screenWidth, screenHeight, centerX, centerY, shortSide, rand) {
+    const { targetAvgDepth, targetMaxDepth, initialRemovableRatio } = params;
+    const n = blocks.length;
+    if (n === 0) return;
+
+    // 1. 按距离中心排序
+    const sorted = blocks.map((block, idx) => {
+      const cx = block.x + block.width / 2;
+      const cy = block.y + block.height / 2;
+      const dist = Math.sqrt((cx - centerX) ** 2 + (cy - centerY) ** 2);
+      return { block, idx, dist, cx, cy };
+    }).sort((a, b) => a.dist - b.dist);
+
+    // 2. 划分区域
+    // 核心区比例随目标深度增加而增加
+    const coreRatio = Math.min(0.5, 0.25 + targetAvgDepth * 0.12);
+    const edgeRatio = Math.max(0.3, initialRemovableRatio + 0.05);
+    
+    const coreCount = Math.floor(n * coreRatio);
+    const edgeCount = Math.floor(n * edgeRatio);
+    const midCount = n - coreCount - edgeCount;
+
+    // 3. 边缘区：朝向屏幕边缘（可消除）
+    for (let i = n - edgeCount; i < n; i++) {
+      const { block, cx, cy } = sorted[i];
+      const outward = this.pickOutwardDirectionForAxis(block, centerX, centerY);
+      this.setBlockDirection(block, outward, shortSide);
+    }
+
+    // 4. 核心区：构建阻挡层
+    this.buildBlockingLayers(
+      sorted.slice(0, coreCount).map(s => s.block),
+      targetMaxDepth,
+      centerX, centerY, shortSide, rand
+    );
+
+    // 5. 中间区：混合策略（部分朝外，部分指向核心）
+    const midBlocks = sorted.slice(coreCount, coreCount + midCount);
+    const inwardRatio = 0.3 + targetAvgDepth * 0.15; // 深度越高，朝内比例越高
+    
+    for (const { block, cx, cy } of midBlocks) {
+      if (rand() < inwardRatio) {
+        // 朝向中心（被阻挡）
+        const inward = this.getOppositeDirection(
+          this.pickOutwardDirectionForAxis(block, centerX, centerY)
+        );
+        this.setBlockDirection(block, inward, shortSide);
+      } else {
+        // 朝向边缘（可消除）
+        const outward = this.pickOutwardDirectionForAxis(block, centerX, centerY);
+        this.setBlockDirection(block, outward, shortSide);
+      }
+    }
+
+    // 6. 验证并微调
+    this.adjustForTargetDepth(blocks, params, screenWidth, screenHeight, centerX, centerY, shortSide, rand);
+  }
+
+  /**
+   * 构建核心区的阻挡层
+   * 策略：从最内层开始，逐层设置方向，形成"洋葱结构"
+   */
+  static buildBlockingLayers(coreBlocks, targetMaxDepth, centerX, centerY, shortSide, rand) {
+    if (coreBlocks.length === 0) return;
+
+    // 按距离中心排序（已排序的核心区）
+    const n = coreBlocks.length;
+    const layerCount = Math.min(targetMaxDepth, Math.ceil(n / 3)); // 每层至少3个方块
+    const blocksPerLayer = Math.ceil(n / layerCount);
+
+    for (let layer = 0; layer < layerCount; layer++) {
+      const start = layer * blocksPerLayer;
+      const end = Math.min(start + blocksPerLayer, n);
+      
+      for (let i = start; i < end; i++) {
+        const block = coreBlocks[i];
+        
+        if (layer === layerCount - 1) {
+          // 最外层核心：50%朝外，50%朝内
+          if (rand() < 0.5) {
+            const outward = this.pickOutwardDirectionForAxis(block, centerX, centerY);
+            this.setBlockDirection(block, outward, shortSide);
+          } else {
+            const inward = this.getOppositeDirection(
+              this.pickOutwardDirectionForAxis(block, centerX, centerY)
+            );
+            this.setBlockDirection(block, inward, shortSide);
+          }
+        } else {
+          // 内层：大部分朝内（被阻挡），少部分随机
+          if (rand() < 0.75) {
+            const inward = this.getOppositeDirection(
+              this.pickOutwardDirectionForAxis(block, centerX, centerY)
+            );
+            this.setBlockDirection(block, inward, shortSide);
+          } else {
+            // 随机方向增加变化
+            const dirs = this.getAxisDirections(block);
+            const dir = dirs[Math.floor(rand() * dirs.length)];
+            this.setBlockDirection(block, dir, shortSide);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * 调整方向以接近目标深度分布
+   */
+  static adjustForTargetDepth(blocks, params, screenWidth, screenHeight, centerX, centerY, shortSide, rand) {
+    const { targetAvgDepth, initialRemovableRatio } = params;
+    const n = blocks.length;
+    
+    // 计算当前深度分布
+    let depthInfo = this.calculateBlockDepths(blocks, screenWidth, screenHeight);
+    
+    // 目标可消除数量
+    const targetRemovable = Math.floor(n * initialRemovableRatio);
+    
+    // 迭代调整（最多5轮）
+    for (let round = 0; round < 5; round++) {
+      // 计算当前可消除数量
+      let removableCount = depthInfo.depths.filter(d => d === 0).length;
+      
+      // 如果可消除数量不足，将一些方块改为朝外
+      if (removableCount < targetRemovable) {
+        const deficit = targetRemovable - removableCount;
+        const blockedIndices = [];
+        
+        for (let i = 0; i < n; i++) {
+          if (depthInfo.depths[i] > 0) {
+            const block = blocks[i];
+            const cx = block.x + block.width / 2;
+            const cy = block.y + block.height / 2;
+            const dist = Math.sqrt((cx - centerX) ** 2 + (cy - centerY) ** 2);
+            blockedIndices.push({ idx: i, dist });
+          }
+        }
+        
+        // 优先调整外围的方块
+        blockedIndices.sort((a, b) => b.dist - a.dist);
+        const toAdjust = Math.min(deficit, blockedIndices.length);
+        
+        for (let i = 0; i < toAdjust; i++) {
+          const block = blocks[blockedIndices[i].idx];
+          const outward = this.pickOutwardDirectionForAxis(block, centerX, centerY);
+          this.setBlockDirection(block, outward, shortSide);
+        }
+      }
+      
+      // 如果平均深度太低，将一些边缘方块改为朝内
+      else if (depthInfo.avgDepth < targetAvgDepth * 0.8) {
+        const removableIndices = [];
+        
+        for (let i = 0; i < n; i++) {
+          if (depthInfo.depths[i] === 0) {
+            const block = blocks[i];
+            const cx = block.x + block.width / 2;
+            const cy = block.y + block.height / 2;
+            const dist = Math.sqrt((cx - centerX) ** 2 + (cy - centerY) ** 2);
+            removableIndices.push({ idx: i, dist });
+          }
+        }
+        
+        // 优先调整靠近中心的可消除方块
+        removableIndices.sort((a, b) => a.dist - b.dist);
+        const excess = removableCount - targetRemovable;
+        const toAdjust = Math.min(Math.max(1, Math.floor(excess * 0.3)), removableIndices.length);
+        
+        for (let i = 0; i < toAdjust; i++) {
+          const block = blocks[removableIndices[i].idx];
+          const inward = this.getOppositeDirection(
+            this.pickOutwardDirectionForAxis(block, centerX, centerY)
+          );
+          this.setBlockDirection(block, inward, shortSide);
+        }
+      }
+      
+      // 重新计算深度
+      depthInfo = this.calculateBlockDepths(blocks, screenWidth, screenHeight);
+      
+      // 检查是否满足条件
+      removableCount = depthInfo.depths.filter(d => d === 0).length;
+      if (removableCount >= targetRemovable && depthInfo.avgDepth >= targetAvgDepth * 0.7) {
+        break;
+      }
+    }
+
+    console.log(`[LevelGenerator] 深度调整完成: 平均深度=${depthInfo.avgDepth.toFixed(2)}, 最大深度=${depthInfo.maxDepth}, 可消除=${depthInfo.depths.filter(d => d === 0).length}/${n}`);
   }
 }

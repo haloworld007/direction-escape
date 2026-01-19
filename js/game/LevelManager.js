@@ -25,11 +25,11 @@ export default class LevelManager {
     this.timeSliceGenerators = new Map(); // 正在进行的分帧生成任务
     this.isTimeSlicing = false;
     
-    // 预加载配置
-    this.preloadAhead = 2;
+    // 预加载配置（一次只预加载一个关卡，避免 Worker 排队）
+    this.preloadAhead = 1;
     
-    // Worker 超时时间
-    this.workerTimeout = 3000;
+    // Worker 超时时间（增加到 15 秒，给复杂算法足够时间）
+    this.workerTimeout = 15000;
     
     // 初始化 Worker
     this.initWorker();
@@ -134,7 +134,7 @@ export default class LevelManager {
   }
 
   /**
-   * 预加载关卡（优先 Worker，降级分帧计算）
+   * 预加载关卡（仅通过 Worker，Worker 不可用时跳过预加载）
    */
   preloadLevel(levelNumber) {
     if (levelNumber <= 0) return;
@@ -144,14 +144,12 @@ export default class LevelManager {
     for (const [, pending] of this.pendingRequests) {
       if (pending.levelNumber === levelNumber) return;
     }
-    if (this.timeSliceGenerators.has(levelNumber)) return;
     
-    // 优先使用 Worker
+    // 只使用 Worker 预加载，Worker 不可用时跳过（在 generateLevel 时会同步生成）
     if (this.workerReady && !this.workerFailed && this.worker) {
       this.preloadLevelWorker(levelNumber);
     } else {
-      // Worker 不可用，使用分帧计算
-      this.preloadLevelTimeSliced(levelNumber);
+      console.log(`[LevelManager] Worker 不可用，跳过预加载关卡 ${levelNumber}，将在需要时同步生成`);
     }
   }
 
@@ -163,12 +161,12 @@ export default class LevelManager {
     
     const requestId = ++this.requestId;
     
-    // 设置超时，超时后切换到分帧计算
+    // 设置超时，超时后放弃预加载（在需要时会同步生成）
     const timeoutId = setTimeout(() => {
       if (this.pendingRequests.has(requestId)) {
-        console.warn(`[LevelManager] Worker 超时，切换到分帧计算关卡 ${levelNumber}`);
+        console.warn(`[LevelManager] Worker 超时 ${this.workerTimeout}ms，放弃预加载关卡 ${levelNumber}，将在需要时同步生成`);
         this.pendingRequests.delete(requestId);
-        this.preloadLevelTimeSliced(levelNumber);
+        // 不再调用分帧计算，在 generateLevel 时会同步生成
       }
     }, this.workerTimeout);
     

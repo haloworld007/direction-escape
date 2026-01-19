@@ -329,7 +329,7 @@ const LevelGenerator = {
 
   generateRotatedGridDominoLayout(params, seed, screenWidth, screenHeight, boardRect) {
     const blocks = [];
-    const { blockCount, blockSize, outwardBias = 0.88, animalTypes = 5 } = params;
+    const { blockCount, blockSize, animalTypes = 5 } = params;
 
     let shortSide = blockSize || BLOCK_SIZES.WIDTH;
     const minShortSide = 12;
@@ -360,6 +360,7 @@ const LevelGenerator = {
     const used = new Set(holes);
     const ordered = this.orderCandidatesCenterOut(candidates, rand);
 
+    // 第一阶段：放置方块（临时方向）
     let placed = 0;
     for (const cell of ordered) {
       if (placed >= targetBlockCount) break;
@@ -374,22 +375,18 @@ const LevelGenerator = {
       const gridCol = axis === 'col' ? Math.min(cell.col, neighbor.col) : cell.col;
       const blockCenterX = (cell.x + neighbor.x) / 2;
       const blockCenterY = (cell.y + neighbor.y) / 2;
-      const direction = this.pickDirectionForPair(
-        cell, neighbor, blockCenterX, blockCenterY, centerX, centerY, rand, outwardBias
-      );
 
-      const { width: bw, height: bh } = this.getBlockDimensions(direction, shortSide);
+      const tempDirection = DIRECTIONS.UP;
+      const { width: bw, height: bh } = this.getBlockDimensions(tempDirection, shortSide);
       const blockX = blockCenterX - bw / 2;
       const blockY = blockCenterY - bh / 2;
 
       if (!this.isBlockInsideSafeRect(blockX, blockY, bw, bh, safeBoardRect)) continue;
       if (this.wouldOverlap(blockX, blockY, bw, bh, blocks, overlapMargin)) continue;
 
-      const usedAnimalTypes = this.ANIMAL_TYPES.slice(0, animalTypes);
-      const animalType = usedAnimalTypes[blocks.length % usedAnimalTypes.length];
       blocks.push({
         x: blockX, y: blockY, width: bw, height: bh,
-        direction, axis, gridRow, gridCol, type: animalType, size: shortSide
+        direction: tempDirection, axis, gridRow, gridCol, type: null, size: shortSide
       });
 
       used.add(cell.key);
@@ -414,21 +411,18 @@ const LevelGenerator = {
         const gridCol = axis === 'col' ? Math.min(cell.col, neighbor.col) : cell.col;
         const blockCenterX = (cell.x + neighbor.x) / 2;
         const blockCenterY = (cell.y + neighbor.y) / 2;
-        const direction = this.pickDirectionForPair(
-          cell, neighbor, blockCenterX, blockCenterY, centerX, centerY, rand, outwardBias
-        );
-        const { width: bw, height: bh } = this.getBlockDimensions(direction, shortSide);
+
+        const tempDirection = DIRECTIONS.UP;
+        const { width: bw, height: bh } = this.getBlockDimensions(tempDirection, shortSide);
         const blockX = blockCenterX - bw / 2;
         const blockY = blockCenterY - bh / 2;
 
         if (!this.isBlockInsideSafeRect(blockX, blockY, bw, bh, safeBoardRect)) continue;
         if (this.wouldOverlap(blockX, blockY, bw, bh, blocks, overlapMargin)) continue;
 
-        const usedAnimalTypes = this.ANIMAL_TYPES.slice(0, animalTypes);
-        const animalType = usedAnimalTypes[blocks.length % usedAnimalTypes.length];
         blocks.push({
           x: blockX, y: blockY, width: bw, height: bh,
-          direction, axis, gridRow, gridCol, type: animalType, size: shortSide
+          direction: tempDirection, axis, gridRow, gridCol, type: null, size: shortSide
         });
 
         used.add(cell.key);
@@ -437,8 +431,18 @@ const LevelGenerator = {
       }
     }
 
-    const initialRemovableRatio = params.initialRemovableRatio || 0.20;
-    this.ensureRemovableBlocks(blocks, screenWidth, screenHeight, centerX, centerY, shortSide, initialRemovableRatio);
+    // 第二阶段：基于阻挡深度分配方向
+    this.assignDirectionsByDepth(blocks, params, screenWidth, screenHeight, centerX, centerY, shortSide, rand);
+
+    // 第三阶段：分配动物类型
+    const usedAnimalTypes = this.ANIMAL_TYPES.slice(0, animalTypes);
+    const shuffledBlocks = [...blocks];
+    this.shuffleArray(shuffledBlocks, rand);
+    shuffledBlocks.forEach((block, i) => {
+      block.type = usedAnimalTypes[i % usedAnimalTypes.length];
+    });
+
+    // 第四阶段：验证可解性
     const solvable = this.ensureSolvablePath(blocks, screenWidth, screenHeight, centerX, centerY, shortSide, seed);
     blocks._solvable = solvable;
 
@@ -848,21 +852,20 @@ const LevelGenerator = {
   },
 
   /**
-   * 获取难度参数（锯齿曲线 + 多维度，固定尺寸）
+   * 获取难度参数（基于阻挡深度系统）
    */
   getDifficultyParams(level) {
-    // 固定方块尺寸
     const BLOCK_SIZE = 16;
+    const lerp = (a, b, t) => a + (b - a) * t;
     
-    // 阶段定义（无新手期）
+    // 阶段定义（基于阻挡深度）
     const phases = [
-      { maxLevel: 15, blockCount: [100, 140], removableRatio: [0.22, 0.28], outwardBias: 0.82, animalTypes: 4 },
-      { maxLevel: 35, blockCount: [140, 175], removableRatio: [0.18, 0.22], outwardBias: 0.72, animalTypes: 5 },
-      { maxLevel: 60, blockCount: [175, 200], removableRatio: [0.15, 0.18], outwardBias: 0.62, animalTypes: 5 },
-      { maxLevel: Infinity, blockCount: [200, 220], removableRatio: [0.12, 0.15], outwardBias: 0.55, animalTypes: 5 }
+      { maxLevel: 15, blockCount: [100, 140], avgDepth: [0.5, 0.8], maxDepth: [2, 3], removableRatio: [0.30, 0.35], animalTypes: 4 },
+      { maxLevel: 35, blockCount: [140, 175], avgDepth: [0.8, 1.2], maxDepth: [3, 4], removableRatio: [0.22, 0.28], animalTypes: 5 },
+      { maxLevel: 60, blockCount: [175, 200], avgDepth: [1.2, 1.6], maxDepth: [4, 5], removableRatio: [0.16, 0.22], animalTypes: 5 },
+      { maxLevel: Infinity, blockCount: [200, 220], avgDepth: [1.6, 2.0], maxDepth: [5, 6], removableRatio: [0.12, 0.16], animalTypes: 5 }
     ];
 
-    // 找到当前阶段
     let phase = phases[0];
     let phaseStartLevel = 1;
     for (let i = 0; i < phases.length; i++) {
@@ -873,32 +876,30 @@ const LevelGenerator = {
       }
     }
 
-    // 计算阶段内进度
     const phaseLength = phase.maxLevel === Infinity ? 40 : phase.maxLevel - phaseStartLevel + 1;
     const levelInPhase = level - phaseStartLevel;
     const phaseProgress = Math.min(1, levelInPhase / phaseLength);
 
-    // 锯齿波动
     const cycleLength = 5;
     const cyclePosition = (level - 1) % cycleLength;
     const isReliefLevel = cyclePosition === cycleLength - 1;
-    let sawtoothFactor = isReliefLevel ? -0.12 : cyclePosition * 0.03;
+    const sawtoothFactor = isReliefLevel ? -0.15 : cyclePosition * 0.04;
 
-    // 计算方块数量
-    const lerp = (a, b, t) => a + (b - a) * t;
     const baseBlockCount = lerp(phase.blockCount[0], phase.blockCount[1], phaseProgress);
     const blockCount = Math.round(Math.max(80, Math.min(220, baseBlockCount + baseBlockCount * sawtoothFactor)));
 
-    // 计算可消除比例
+    const baseAvgDepth = lerp(phase.avgDepth[0], phase.avgDepth[1], phaseProgress);
+    const depthAdjust = isReliefLevel ? -0.2 : cyclePosition * 0.05;
+    const targetAvgDepth = Math.max(0.3, Math.min(2.5, baseAvgDepth + depthAdjust));
+
+    const baseMaxDepth = lerp(phase.maxDepth[0], phase.maxDepth[1], phaseProgress);
+    const maxDepthAdjust = isReliefLevel ? -1 : Math.floor(cyclePosition * 0.3);
+    const targetMaxDepth = Math.max(2, Math.min(6, Math.round(baseMaxDepth + maxDepthAdjust)));
+
     const baseRemovableRatio = lerp(phase.removableRatio[0], phase.removableRatio[1], 1 - phaseProgress);
-    const removableAdjust = isReliefLevel ? 0.06 : -cyclePosition * 0.012;
-    const initialRemovableRatio = Math.max(0.10, Math.min(0.35, baseRemovableRatio + removableAdjust));
+    const removableAdjust = isReliefLevel ? 0.08 : -cyclePosition * 0.015;
+    const initialRemovableRatio = Math.max(0.10, Math.min(0.40, baseRemovableRatio + removableAdjust));
 
-    // 计算朝外偏好
-    const outwardAdjust = isReliefLevel ? 0.08 : -cyclePosition * 0.015;
-    const outwardBias = Math.max(0.45, Math.min(0.90, phase.outwardBias + outwardAdjust));
-
-    // 空洞率
     const holeRateBase = blockCount > 170 ? 0.05 : blockCount > 140 ? 0.07 : 0.09;
     const holeRateRange = [holeRateBase, holeRateBase + 0.03];
 
@@ -907,10 +908,202 @@ const LevelGenerator = {
       blockSize: BLOCK_SIZE,
       holeRateRange,
       initialRemovableRatio,
-      outwardBias,
+      targetAvgDepth,
+      targetMaxDepth,
       animalTypes: phase.animalTypes,
       isReliefLevel
     };
+  },
+
+  // ==================== 阻挡深度系统 ====================
+
+  calculateBlockDepths(blocks, screenWidth, screenHeight) {
+    const n = blocks.length;
+    if (n === 0) return { depths: [], avgDepth: 0, maxDepth: 0 };
+
+    const depths = new Array(n).fill(-1);
+    const working = blocks.map(b => ({ ...b, isRemoved: false, visible: true }));
+
+    let currentDepth = 0;
+    let remaining = n;
+    
+    while (remaining > 0) {
+      const removableIndices = [];
+      
+      for (let i = 0; i < n; i++) {
+        if (depths[i] !== -1) continue;
+        if (working[i].isRemoved) continue;
+        
+        if (!DirectionDetector.isBlocked(working[i], working, screenWidth, screenHeight, { debug: false })) {
+          removableIndices.push(i);
+        }
+      }
+
+      if (removableIndices.length === 0) {
+        for (let i = 0; i < n; i++) {
+          if (depths[i] === -1) depths[i] = currentDepth + 1;
+        }
+        break;
+      }
+
+      for (const idx of removableIndices) {
+        depths[idx] = currentDepth;
+        working[idx].isRemoved = true;
+        remaining--;
+      }
+
+      currentDepth++;
+    }
+
+    const validDepths = depths.filter(d => d >= 0);
+    const avgDepth = validDepths.length > 0 ? validDepths.reduce((a, b) => a + b, 0) / validDepths.length : 0;
+    const maxDepth = Math.max(...validDepths, 0);
+
+    return { depths, avgDepth, maxDepth };
+  },
+
+  assignDirectionsByDepth(blocks, params, screenWidth, screenHeight, centerX, centerY, shortSide, rand) {
+    const { targetAvgDepth, targetMaxDepth, initialRemovableRatio } = params;
+    const n = blocks.length;
+    if (n === 0) return;
+
+    const sorted = blocks.map((block, idx) => {
+      const cx = block.x + block.width / 2;
+      const cy = block.y + block.height / 2;
+      const dist = Math.sqrt((cx - centerX) ** 2 + (cy - centerY) ** 2);
+      return { block, idx, dist, cx, cy };
+    }).sort((a, b) => a.dist - b.dist);
+
+    const coreRatio = Math.min(0.5, 0.25 + targetAvgDepth * 0.12);
+    const edgeRatio = Math.max(0.3, initialRemovableRatio + 0.05);
+    
+    const coreCount = Math.floor(n * coreRatio);
+    const edgeCount = Math.floor(n * edgeRatio);
+    const midCount = n - coreCount - edgeCount;
+
+    for (let i = n - edgeCount; i < n; i++) {
+      const { block } = sorted[i];
+      const outward = this.pickOutwardDirectionForAxis(block, centerX, centerY);
+      this.setBlockDirection(block, outward, shortSide);
+    }
+
+    this.buildBlockingLayers(
+      sorted.slice(0, coreCount).map(s => s.block),
+      targetMaxDepth, centerX, centerY, shortSide, rand
+    );
+
+    const midBlocks = sorted.slice(coreCount, coreCount + midCount);
+    const inwardRatio = 0.3 + targetAvgDepth * 0.15;
+    
+    for (const { block } of midBlocks) {
+      if (rand() < inwardRatio) {
+        const inward = this.getOppositeDirection(this.pickOutwardDirectionForAxis(block, centerX, centerY));
+        this.setBlockDirection(block, inward, shortSide);
+      } else {
+        const outward = this.pickOutwardDirectionForAxis(block, centerX, centerY);
+        this.setBlockDirection(block, outward, shortSide);
+      }
+    }
+
+    this.adjustForTargetDepth(blocks, params, screenWidth, screenHeight, centerX, centerY, shortSide, rand);
+  },
+
+  buildBlockingLayers(coreBlocks, targetMaxDepth, centerX, centerY, shortSide, rand) {
+    if (coreBlocks.length === 0) return;
+
+    const n = coreBlocks.length;
+    const layerCount = Math.min(targetMaxDepth, Math.ceil(n / 3));
+    const blocksPerLayer = Math.ceil(n / layerCount);
+
+    for (let layer = 0; layer < layerCount; layer++) {
+      const start = layer * blocksPerLayer;
+      const end = Math.min(start + blocksPerLayer, n);
+      
+      for (let i = start; i < end; i++) {
+        const block = coreBlocks[i];
+        
+        if (layer === layerCount - 1) {
+          if (rand() < 0.5) {
+            const outward = this.pickOutwardDirectionForAxis(block, centerX, centerY);
+            this.setBlockDirection(block, outward, shortSide);
+          } else {
+            const inward = this.getOppositeDirection(this.pickOutwardDirectionForAxis(block, centerX, centerY));
+            this.setBlockDirection(block, inward, shortSide);
+          }
+        } else {
+          if (rand() < 0.75) {
+            const inward = this.getOppositeDirection(this.pickOutwardDirectionForAxis(block, centerX, centerY));
+            this.setBlockDirection(block, inward, shortSide);
+          } else {
+            const dirs = this.getAxisDirections(block);
+            const dir = dirs[Math.floor(rand() * dirs.length)];
+            this.setBlockDirection(block, dir, shortSide);
+          }
+        }
+      }
+    }
+  },
+
+  adjustForTargetDepth(blocks, params, screenWidth, screenHeight, centerX, centerY, shortSide, rand) {
+    const { targetAvgDepth, initialRemovableRatio } = params;
+    const n = blocks.length;
+    
+    let depthInfo = this.calculateBlockDepths(blocks, screenWidth, screenHeight);
+    const targetRemovable = Math.floor(n * initialRemovableRatio);
+    
+    for (let round = 0; round < 5; round++) {
+      let removableCount = depthInfo.depths.filter(d => d === 0).length;
+      
+      if (removableCount < targetRemovable) {
+        const deficit = targetRemovable - removableCount;
+        const blockedIndices = [];
+        
+        for (let i = 0; i < n; i++) {
+          if (depthInfo.depths[i] > 0) {
+            const block = blocks[i];
+            const cx = block.x + block.width / 2;
+            const cy = block.y + block.height / 2;
+            const dist = Math.sqrt((cx - centerX) ** 2 + (cy - centerY) ** 2);
+            blockedIndices.push({ idx: i, dist });
+          }
+        }
+        
+        blockedIndices.sort((a, b) => b.dist - a.dist);
+        const toAdjust = Math.min(deficit, blockedIndices.length);
+        
+        for (let i = 0; i < toAdjust; i++) {
+          const block = blocks[blockedIndices[i].idx];
+          const outward = this.pickOutwardDirectionForAxis(block, centerX, centerY);
+          this.setBlockDirection(block, outward, shortSide);
+        }
+      } else if (depthInfo.avgDepth < targetAvgDepth * 0.8) {
+        const removableIndices = [];
+        
+        for (let i = 0; i < n; i++) {
+          if (depthInfo.depths[i] === 0) {
+            const block = blocks[i];
+            const cx = block.x + block.width / 2;
+            const cy = block.y + block.height / 2;
+            const dist = Math.sqrt((cx - centerX) ** 2 + (cy - centerY) ** 2);
+            removableIndices.push({ idx: i, dist });
+          }
+        }
+        
+        removableIndices.sort((a, b) => a.dist - b.dist);
+        const excess = removableCount - targetRemovable;
+        const toAdjust = Math.min(Math.max(1, Math.floor(excess * 0.3)), removableIndices.length);
+        
+        for (let i = 0; i < toAdjust; i++) {
+          const block = blocks[removableIndices[i].idx];
+          const inward = this.getOppositeDirection(this.pickOutwardDirectionForAxis(block, centerX, centerY));
+          this.setBlockDirection(block, inward, shortSide);
+        }
+      }
+      
+      depthInfo = this.calculateBlockDepths(blocks, screenWidth, screenHeight);
+      removableCount = depthInfo.depths.filter(d => d === 0).length;
+      if (removableCount >= targetRemovable && depthInfo.avgDepth >= targetAvgDepth * 0.7) break;
+    }
   }
 };
 
