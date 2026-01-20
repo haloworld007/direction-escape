@@ -145,13 +145,17 @@ export default class DirectionGame {
 
     if (databus.isSpawning) return;
 
-    // 检查设置按钮
-    const settingsArea = this.gameRenderer.getSettingsButtonArea();
-    if (settingsArea && x >= settingsArea.x && x <= settingsArea.x + settingsArea.width &&
-        y >= settingsArea.y && y <= settingsArea.y + settingsArea.height) {
-      console.log('[DirectionGame] 点击了设置按钮');
-      // TODO: 打开设置面板
-      return;
+    // 检查顶部功能按钮（4个）
+    const topButtons = ['settings', 'refresh', 'background', 'pureColor'];
+    for (const type of topButtons) {
+      const area = this.gameRenderer.getTopButtonArea(type);
+      if (area && x >= area.x && x <= area.x + area.width &&
+          y >= area.y && y <= area.y + area.height) {
+        // 播放按钮点击音效
+        this.audioManager.playSFX('buttonClick');
+        this.handleTopButtonClick(type);
+        return;
+      }
     }
 
     // 检查道具按钮（PRD v1.3: 4种道具）
@@ -375,7 +379,7 @@ export default class DirectionGame {
     // 不立即检测死局，让玩家先操作
     console.log('[DirectionGame] 使用了洗牌道具（方向）');
 
-    this.modalRenderer.showToast('已重新排列方向');
+    this.modalRenderer.showToast('已随机方块方向');
   }
 
   /**
@@ -505,8 +509,35 @@ export default class DirectionGame {
 
       case 'useProp':
         // 使用道具（失败弹窗中）
-        // TODO: 显示道具选择界面
-        console.log('[DirectionGame] 选择使用道具');
+        console.log('[DirectionGame] 失败弹窗：选择使用道具');
+        {
+          const totalProps = (databus.items.grab || 0) + (databus.items.flip || 0) +
+                             (databus.items.shufflePos || 0) + (databus.items.shuffleDir || 0);
+
+          // 没有可用道具：引导重开本关
+          if (totalProps <= 0) {
+            this.modalRenderer.showConfirm(
+              {
+                title: '没有可用道具',
+                message: '要重开本关吗？',
+                confirmText: '重开',
+                cancelText: '取消'
+              },
+              (ok) => {
+                if (ok) this.startLevel(databus.currentLevel);
+              }
+            );
+            return;
+          }
+
+          // 允许继续游戏（仅用于点击下方道具按钮解围）
+          databus.isPlaying = true;
+          databus.isDeadlock = false;
+          this.state = 'playing';
+          this.propMode = null;
+          this.modalRenderer.hide();
+          this.modalRenderer.showToast('请在下方选择要使用的道具', 1800);
+        }
         break;
 
       case 'retry':
@@ -526,6 +557,30 @@ export default class DirectionGame {
         // 取消弹窗
         this.modalRenderer.hide();
         break;
+    }
+  }
+
+  /**
+   * 顶部功能按钮点击处理（关卡页左上角 2x2）
+   */
+  handleTopButtonClick(type) {
+    const databus = GameGlobal.databus;
+    switch (type) {
+      case 'settings':
+        this.modalRenderer.showToast('设置功能开发中');
+        break;
+      case 'refresh':
+        // 刷新/重开本关
+        this.startLevel(databus.currentLevel);
+        break;
+      case 'background':
+        this.modalRenderer.showToast('背景切换开发中');
+        break;
+      case 'pureColor':
+        this.modalRenderer.showToast('纯色模式开发中');
+        break;
+      default:
+        this.modalRenderer.showToast('功能开发中');
     }
   }
 

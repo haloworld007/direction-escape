@@ -243,8 +243,9 @@ export const PROP_TYPES = {
 export const PROP_NAMES = {
   grab: "抓走",
   flip: "翻转",
-  shufflePos: "洗牌",
-  shuffleDir: "洗牌",
+  shufflePos: "重排",
+  // 与“翻转”不同：翻转通常是整体反向；这里是随机打乱朝向以破局
+  shuffleDir: "随机向",
 };
 
 /**

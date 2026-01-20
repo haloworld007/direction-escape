@@ -40,9 +40,19 @@ export default class LevelManager {
    */
   initWorker() {
     try {
+      let useExperimentalWorker = true;
+      try {
+        const sys = wx.getSystemInfoSync ? wx.getSystemInfoSync() : null;
+        const isDevtools = sys && sys.platform === 'devtools';
+        // 开发者工具环境下部分 Worker 能力探测会报 not support，禁用实验 Worker 可显著降低噪声与异常
+        if (isDevtools) useExperimentalWorker = false;
+      } catch (e) {
+        // ignore
+      }
+      
       // 微信小游戏 Worker API
       this.worker = wx.createWorker('workers/levelGenerator.js', {
-        useExperimentalWorker: true
+        useExperimentalWorker
       });
       
       this.worker.onMessage(this.handleWorkerMessage.bind(this));

@@ -32,7 +32,7 @@ export default class PropButton {
     this.isActive = false;
 
     // 是否需要观看广告（右上角视频图标）
-    this.needsAd = true;
+    this.needsAd = (this.count <= 0);
 
     // 触摸区域（比按钮稍大，便于点击）
     this.touchArea = {
@@ -48,6 +48,7 @@ export default class PropButton {
    */
   updateCount(count) {
     this.count = count;
+    this.needsAd = (this.count <= 0);
   }
 
   /**
@@ -82,14 +83,19 @@ export default class PropButton {
   render(ctx) {
     ctx.save();
 
+    // 数量为 0 时呈现“禁用”态（仍可点击：后续可接激励视频/购买）
+    if (this.count <= 0) {
+      ctx.globalAlpha = 0.55;
+    }
+
     // 应用缩放动画
     ctx.translate(this.x, this.y);
     ctx.scale(this.scale, this.scale);
     ctx.translate(-this.x, -this.y);
 
-    // 如果激活，绘制发光效果
+    // 如果激活，绘制轻量状态（不发光，避免像 bug）
     if (this.isActive) {
-      this.drawActiveGlow(ctx);
+      this.drawActiveOutline(ctx);
     }
 
     // 绘制按钮主体（圆角矩形）
@@ -97,6 +103,9 @@ export default class PropButton {
 
     // 绘制图标
     this.drawIcon(ctx);
+
+    // 绘制数量角标（右下角）
+    this.drawCountBadge(ctx);
 
     // 绘制视频图标（右上角）
     if (this.needsAd) {
@@ -158,7 +167,28 @@ export default class PropButton {
   }
 
   /**
-   * 绘制激活状态的发光效果
+   * 绘制激活态外框（轻量，不发光）
+   */
+  drawActiveOutline(ctx) {
+    const left = this.x - this.width / 2;
+    const top = this.y - this.height / 2;
+    const inset = 2;
+    const cornerRadius = 14;
+
+    // 使用道具自身颜色做外框，避免“黄色圈”误解为 bug
+    const color = getPropColor(this.type);
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = 0.9;
+    ctx.lineWidth = 3;
+    drawRoundRect(ctx, left + inset, top + inset, this.width - inset * 2, this.height - inset * 2, cornerRadius - inset);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /**
+   * 兼容旧实现：保留方法名但不再使用（避免外部误调用）
    */
   drawActiveGlow(ctx) {
     const left = this.x - this.width / 2;
@@ -166,21 +196,9 @@ export default class PropButton {
     const glowSize = 8;
     const cornerRadius = 14;
 
-    // 外发光（金色）
-    ctx.shadowColor = 'rgba(255, 215, 0, 0.8)';
-    ctx.shadowBlur = 20;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 0;
-
-    // 绘制发光边框
-    ctx.strokeStyle = 'rgba(255, 215, 0, 0.9)';
-    ctx.lineWidth = 4;
-    drawRoundRect(ctx, left - glowSize, top - glowSize, this.width + glowSize * 2, this.height + glowSize * 2, cornerRadius + glowSize);
-    ctx.stroke();
-
-    // 清除阴影
-    ctx.shadowColor = 'transparent';
-    ctx.shadowBlur = 0;
+    // 不再绘制“黄色发光”，改用轻量外框
+    // 保留此函数仅为兼容，防止未来调用报错
+    this.drawActiveOutline(ctx);
   }
 
   /**
@@ -358,6 +376,38 @@ export default class PropButton {
     ctx.lineTo(badgeX + triSize * 0.6, badgeY);
     ctx.closePath();
     ctx.fill();
+  }
+
+  /**
+   * 绘制数量角标（右下角）
+   */
+  drawCountBadge(ctx) {
+    const badgeRadius = 11;
+    const badgeX = this.x + this.width / 2 - badgeRadius - 4;
+    const badgeY = this.y + this.height / 2 - badgeRadius - 4;
+
+    // 背景
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.25)';
+    ctx.shadowBlur = 4;
+    ctx.shadowOffsetY = 2;
+
+    ctx.fillStyle = this.count > 0 ? 'rgba(0, 0, 0, 0.7)' : 'rgba(0, 0, 0, 0.55)';
+    ctx.beginPath();
+    ctx.arc(badgeX, badgeY, badgeRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.shadowColor = 'transparent';
+
+    // 文本
+    const text = `${Math.max(0, this.count)}`;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = `bold ${FONT_SIZES.HINT - 2}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, badgeX, badgeY);
+
+    ctx.restore();
   }
 
   /**

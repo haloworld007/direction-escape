@@ -26,7 +26,7 @@ export default class GameRenderer {
     // 顶部功能按钮区域
     this.topButtons = {
       settings: null,
-      undo: null,
+      refresh: null,
       background: null,
       pureColor: null
     };
@@ -112,11 +112,6 @@ export default class GameRenderer {
 
     // 绘制棋盘区域
     this.drawBoardArea(ctx, databus);
-
-    // 如果在抓取模式，显示提示
-    if (propMode === 'grab') {
-      this.drawGrabModeHint(ctx);
-    }
 
     // 绘制底部道具栏（传递道具模式以显示激活状态）
     this.drawBottomBar(ctx, propMode);
@@ -227,72 +222,202 @@ export default class GameRenderer {
   }
 
   /**
-   * 绘制顶部左侧2x2功能区（优化版：更圆润+文字标签）
+   * 绘制顶部左侧2x2功能区（设计感版本）
+   * - 第一排（设置/刷新）：仅图标居中，无文字
+   * - 第二排（背景/纯色）：图标居中，白色艺术字体在按钮下方横跨背景
    */
   drawTopFunctionButtons(ctx) {
     const startX = LAYOUT.SIDE_PADDING;
     const startY = 12;
-    const buttonSize = 50;  // 稍大的按钮
+    const buttonSize = 40;           // 紧凑一点
     const gap = 8;
+    const row2LabelOffset = 16;      // 第二排文字在按钮下方的偏移
 
     const buttons = [
-      { type: 'settings', icon: '⚙️', color: '#4CAF50', row: 0, col: 0 },
-      { type: 'undo', icon: '↩️', color: '#03A9F4', row: 0, col: 1, hasAd: true },
-      { type: 'background', icon: '👕', color: '#FFFFFF', row: 1, col: 0, label: '背景' },
-      { type: 'pureColor', icon: '🐻', color: '#8BC34A', row: 1, col: 1, label: '纯色模式' }
+      { type: 'settings', label: '', accent: '#4CAF50', row: 0, col: 0 },
+      { type: 'refresh', label: '', accent: '#03A9F4', row: 0, col: 1 },
+      { type: 'background', label: '背景', accent: '#FF9800', row: 1, col: 0 },
+      { type: 'pureColor', label: '纯色', accent: '#8BC34A', row: 1, col: 1 }
     ];
 
     buttons.forEach(btn => {
       const x = startX + btn.col * (buttonSize + gap);
-      const y = startY + btn.row * (buttonSize + gap + (btn.label ? 14 : 0));
+      // 第二排整体下移一点，给文字留空间
+      const rowOffset = btn.row === 1 ? row2LabelOffset : 0;
+      const y = startY + btn.row * (buttonSize + gap) + rowOffset;
 
-      // 按钮背景（更圆润）
+      // 按钮背景（玻璃拟态：白底+轻阴影+圆角）
       ctx.save();
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
-      ctx.shadowBlur = 6;
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
+      ctx.shadowBlur = 8;
       ctx.shadowOffsetY = 3;
-      
-      // 渐变背景
-      const btnGradient = ctx.createLinearGradient(x, y, x, y + buttonSize);
-      const baseColor = btn.color;
-      btnGradient.addColorStop(0, this.lightenColor(baseColor, 20));
-      btnGradient.addColorStop(0.5, baseColor);
-      btnGradient.addColorStop(1, this.darkenColor(baseColor, 10));
-      ctx.fillStyle = btnGradient;
-      
-      drawRoundRect(ctx, x, y, buttonSize, buttonSize, 12);  // 更大圆角
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+      drawRoundRect(ctx, x, y, buttonSize, buttonSize, 12);
       ctx.fill();
       
-      // 高光边框
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-      ctx.lineWidth = 1.5;
+      // 细边框
+      ctx.shadowColor = 'transparent';
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.06)';
+      ctx.lineWidth = 1;
       ctx.stroke();
       ctx.restore();
 
-      // 图标
-      ctx.fillStyle = btn.color === '#FFFFFF' ? '#333' : '#FFF';
-      ctx.font = `${buttonSize * 0.45}px Arial`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(btn.icon, x + buttonSize / 2, y + buttonSize / 2);
+      // 图标居中（自绘矢量）
+      const iconSize = 18;
+      this.drawTopButtonIcon(
+        ctx,
+        btn.type,
+        x + buttonSize / 2,
+        y + buttonSize / 2,
+        iconSize,
+        btn.accent
+      );
 
-      // 视频广告标记
-      if (btn.hasAd) {
-        this.drawSmallAdBadge(ctx, x + buttonSize - 6, y + 6);
-      }
-
-      // 文字标签（在按钮下方）
+      // 第二排文字：白色艺术字体，在按钮下方横跨绿色背景
       if (btn.label) {
-        ctx.fillStyle = '#333';
-        ctx.font = 'bold 10px Arial';
+        const labelX = x + buttonSize / 2;
+        const labelY = y + buttonSize + 10;
+
+        ctx.save();
+        // 文字阴影（让白字在绿色背景上更清晰）
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
+        ctx.shadowBlur = 3;
+        ctx.shadowOffsetY = 1;
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold italic 11px "Avenir Next", "PingFang SC", sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
-        ctx.fillText(btn.label, x + buttonSize / 2, y + buttonSize + 3);
+        ctx.fillText(btn.label, labelX, labelY);
+        ctx.restore();
       }
 
       // 保存按钮区域
       this.topButtons[btn.type] = { x, y, width: buttonSize, height: buttonSize };
     });
+  }
+
+  /**
+   * 顶部按钮矢量图标绘制
+   */
+  drawTopButtonIcon(ctx, type, cx, cy, size, color) {
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    switch (type) {
+      case 'settings':
+        this.drawIconGear(ctx, cx, cy, size);
+        break;
+      case 'refresh':
+        this.drawIconRefresh(ctx, cx, cy, size);
+        break;
+      case 'background':
+        this.drawIconPicture(ctx, cx, cy, size);
+        break;
+      case 'pureColor':
+        this.drawIconDroplet(ctx, cx, cy, size);
+        break;
+      default:
+        // fallback: dot
+        ctx.beginPath();
+        ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
+  drawIconGear(ctx, cx, cy, size) {
+    const rOuter = size * 0.38;
+    const rInner = size * 0.18;
+    const teeth = 8;
+    const toothLen = size * 0.14;
+
+    // 外圈
+    ctx.beginPath();
+    ctx.arc(cx, cy, rOuter, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 齿
+    for (let i = 0; i < teeth; i++) {
+      const a = (Math.PI * 2 * i) / teeth;
+      const x1 = cx + Math.cos(a) * (rOuter - toothLen * 0.2);
+      const y1 = cy + Math.sin(a) * (rOuter - toothLen * 0.2);
+      const x2 = cx + Math.cos(a) * (rOuter + toothLen);
+      const y2 = cy + Math.sin(a) * (rOuter + toothLen);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+
+    // 内孔
+    ctx.beginPath();
+    ctx.arc(cx, cy, rInner, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  drawIconRefresh(ctx, cx, cy, size) {
+    const r = size * 0.42;
+    const start = Math.PI * 0.1;
+    const end = Math.PI * 1.85;
+
+    // 弧线
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, start, end, false);
+    ctx.stroke();
+
+    // 箭头（右上）
+    const ax = cx + Math.cos(end) * r;
+    const ay = cy + Math.sin(end) * r;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(ax - size * 0.16, ay - size * 0.02);
+    ctx.lineTo(ax - size * 0.04, ay + size * 0.14);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  drawIconPicture(ctx, cx, cy, size) {
+    const w = size * 0.95;
+    const h = size * 0.72;
+    const x = cx - w / 2;
+    const y = cy - h / 2;
+    const r = 4;
+
+    // 外框
+    drawRoundRect(ctx, x, y, w, h, r);
+    ctx.stroke();
+
+    // 太阳
+    ctx.beginPath();
+    ctx.arc(x + w * 0.78, y + h * 0.3, size * 0.08, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 山
+    ctx.beginPath();
+    ctx.moveTo(x + w * 0.12, y + h * 0.82);
+    ctx.lineTo(x + w * 0.42, y + h * 0.52);
+    ctx.lineTo(x + w * 0.62, y + h * 0.7);
+    ctx.lineTo(x + w * 0.82, y + h * 0.45);
+    ctx.lineTo(x + w * 0.9, y + h * 0.82);
+    ctx.stroke();
+  }
+
+  drawIconDroplet(ctx, cx, cy, size) {
+    const s = size * 0.48;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - s);
+    ctx.quadraticCurveTo(cx + s, cy - s * 0.2, cx + s * 0.55, cy + s * 0.55);
+    ctx.quadraticCurveTo(cx, cy + s * 1.1, cx - s * 0.55, cy + s * 0.55);
+    ctx.quadraticCurveTo(cx - s, cy - s * 0.2, cx, cy - s);
+    ctx.closePath();
+    ctx.stroke();
   }
 
   /**
@@ -552,8 +677,8 @@ export default class GameRenderer {
     const propNames = {
       grab: '抓走',
       flip: '翻转',
-      shufflePos: '洗牌',
-      shuffleDir: '洗牌'
+      shufflePos: '重排',
+      shuffleDir: '随机向'
     };
 
     Object.entries(this.propButtons).forEach(([type, button]) => {

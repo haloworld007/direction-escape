@@ -301,7 +301,7 @@ export default class ModalRenderer {
 
     // 重试按钮
     this.buttons.retry = new Button(
-      '重试',
+      '重开本关',
       centerX - BUTTON_SIZES.SECONDARY.WIDTH / 2,
       buttonY + BUTTON_SIZES.PRIMARY.HEIGHT + 12,
       {
