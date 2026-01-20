@@ -99,6 +99,106 @@ export default class ModalRenderer {
     ctx.restore();
   }
 
+  // ==================== 关卡警告提示 ====================
+
+  /**
+   * 显示关卡警告（用于 Level 2 难度飙升提示）
+   * @param {string} title - 标题
+   * @param {string} message - 消息内容
+   * @param {number} duration - 显示时长（毫秒）
+   * @param {Function} onComplete - 完成后的回调
+   */
+  showLevelWarning(title, message, duration = 2000, onComplete = null) {
+    this.warningData = {
+      title: title || '⚠️ 警告',
+      message: message || '',
+      startTime: Date.now(),
+      duration,
+      onComplete
+    };
+    this.showingWarning = true;
+  }
+
+  /**
+   * 渲染关卡警告（全屏震动效果 + 渐变背景）
+   */
+  renderLevelWarning(ctx) {
+    if (!this.showingWarning || !this.warningData) return;
+
+    const elapsed = Date.now() - this.warningData.startTime;
+    const { duration, title, message, onComplete } = this.warningData;
+
+    // 检查是否结束
+    if (elapsed >= duration) {
+      this.showingWarning = false;
+      this.warningData = null;
+      if (onComplete) onComplete();
+      return;
+    }
+
+    const screenWidth = canvas.width;
+    const screenHeight = canvas.height;
+    const progress = elapsed / duration;
+
+    // 计算动画效果
+    let alpha = 1;
+    let shakeOffset = 0;
+    
+    // 淡入淡出
+    if (elapsed < 200) {
+      alpha = elapsed / 200;
+    } else if (elapsed > duration - 400) {
+      alpha = (duration - elapsed) / 400;
+    }
+
+    // 震动效果（前半段）
+    if (elapsed < duration * 0.5) {
+      const shakeIntensity = 5 * (1 - progress * 2);
+      shakeOffset = Math.sin(elapsed * 0.05) * shakeIntensity;
+    }
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    // 全屏半透明背景（红色调，营造紧张感）
+    const bgGradient = ctx.createRadialGradient(
+      screenWidth / 2, screenHeight / 2, 0,
+      screenWidth / 2, screenHeight / 2, screenWidth * 0.6
+    );
+    bgGradient.addColorStop(0, 'rgba(139, 0, 0, 0.6)');
+    bgGradient.addColorStop(1, 'rgba(50, 0, 0, 0.85)');
+    ctx.fillStyle = bgGradient;
+    ctx.fillRect(0, 0, screenWidth, screenHeight);
+
+    // 中心警告框
+    const boxWidth = screenWidth * 0.8;
+    const boxHeight = 140;
+    const boxX = (screenWidth - boxWidth) / 2 + shakeOffset;
+    const boxY = (screenHeight - boxHeight) / 2;
+
+    // 警告框背景
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.strokeStyle = '#FF4444';
+    ctx.lineWidth = 3;
+    drawRoundRect(ctx, boxX, boxY, boxWidth, boxHeight, 16);
+    ctx.fill();
+    ctx.stroke();
+
+    // 标题（红色醒目字体）
+    ctx.fillStyle = '#FF6B6B';
+    ctx.font = `bold 26px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(title, screenWidth / 2 + shakeOffset, boxY + 45);
+
+    // 消息（白色）
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = `18px Arial`;
+    ctx.fillText(message, screenWidth / 2 + shakeOffset, boxY + 95);
+
+    ctx.restore();
+  }
+
   // ==================== 确认弹窗 ====================
 
   /**
@@ -332,6 +432,9 @@ export default class ModalRenderer {
   render(ctx, databus) {
     // 先渲染 Toast（不阻挡其他操作）
     this.renderToast(ctx);
+
+    // 渲染关卡警告（如果有）
+    this.renderLevelWarning(ctx);
 
     if (!this.currentModal) return;
 

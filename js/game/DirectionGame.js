@@ -630,6 +630,15 @@ export default class DirectionGame {
     databus.isDeadlock = false;
     databus.isSpawning = true;
 
+    // Level 2 特殊警告提示
+    if (levelData.meta && levelData.meta.showWarning) {
+      this.modalRenderer.showLevelWarning(
+        '⚠️ 难度飙升',
+        '做好准备，真正的挑战开始了！',
+        2000
+      );
+    }
+
     // 四面八方飞入动画参数
     const boardRect = getBoardRect(canvas.width, canvas.height);
     const baseDuration = 450;       // 基础持续时间
