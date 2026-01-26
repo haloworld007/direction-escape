@@ -3,16 +3,10 @@
  * 负责生成关卡和管理关卡数据
  * 支持 Worker 后台生成 + 分帧计算降级方案
  * 
- * 更新：默认使用 ReverseLevelGenerator（逆向填空算法），
- * 保留 LevelGenerator 作为后备
+ * 更新：仅使用 ReverseLevelGenerator（逆向填空算法）
  */
-import LevelGenerator from './algorithms/LevelGenerator';
 import ReverseLevelGenerator from './algorithms/ReverseLevelGenerator';
 import Block from './blocks/Block';
-import { getBoardRect } from '../ui/UIConstants';
-
-// 使用逆向填空算法作为默认
-const USE_REVERSE_GENERATOR = true;
 
 export default class LevelManager {
   constructor() {
@@ -100,8 +94,7 @@ export default class LevelManager {
       const result = this.createBlockInstances(levelData);
       
       // 附加关卡元数据
-      const generator = USE_REVERSE_GENERATOR ? ReverseLevelGenerator : LevelGenerator;
-      const params = generator.getDifficultyParams(levelNumber);
+      const params = ReverseLevelGenerator.getDifficultyParams(levelNumber);
       result.meta = {
         scale: params.scale || 1.0,
         showWarning: params.showWarning || false,
@@ -141,12 +134,11 @@ export default class LevelManager {
     const startTime = Date.now();
     
     // 选择生成算法
-    const generator = USE_REVERSE_GENERATOR ? ReverseLevelGenerator : LevelGenerator;
-    const levelData = generator.generate(levelNumber, canvas.width, canvas.height);
+    const levelData = ReverseLevelGenerator.generate(levelNumber, canvas.width, canvas.height);
     const result = this.createBlockInstances(levelData);
     
     // 附加关卡元数据（scale, showWarning 等）
-    const params = generator.getDifficultyParams(levelNumber);
+    const params = ReverseLevelGenerator.getDifficultyParams(levelNumber);
     result.meta = {
       scale: params.scale || 1.0,
       showWarning: params.showWarning || false,
@@ -154,7 +146,7 @@ export default class LevelManager {
       isReliefLevel: params.isReliefLevel || false
     };
     
-    console.log(`[LevelManager] 同步生成完成，耗时 ${Date.now() - startTime}ms，算法: ${USE_REVERSE_GENERATOR ? '逆向填空' : '传统'}`);
+    console.log(`[LevelManager] 同步生成完成，耗时 ${Date.now() - startTime}ms，算法: 逆向填空`);
     return result;
   }
 
@@ -202,14 +194,15 @@ export default class LevelManager {
     
     const requestId = ++this.requestId;
     
-    // 设置超时，超时后放弃预加载（在需要时会同步生成）
-    const timeoutId = setTimeout(() => {
-      if (this.pendingRequests.has(requestId)) {
-        console.warn(`[LevelManager] Worker 超时 ${this.workerTimeout}ms，放弃预加载关卡 ${levelNumber}，将在需要时同步生成`);
-        this.pendingRequests.delete(requestId);
-        // 不再调用分帧计算，在 generateLevel 时会同步生成
+    // 设置超时，超时后记录一次警告并继续等待
+    const scheduleTimeout = () => {
+      const pending = this.pendingRequests.get(requestId);
+      if (pending) {
+        console.warn(`[LevelManager] Worker 超时 ${this.workerTimeout}ms，继续等待关卡 ${levelNumber} 完成`);
+        pending.timeoutId = setTimeout(scheduleTimeout, this.workerTimeout);
       }
-    }, this.workerTimeout);
+    };
+    const timeoutId = setTimeout(scheduleTimeout, this.workerTimeout);
     
     this.pendingRequests.set(requestId, {
       resolve: null,
@@ -248,59 +241,18 @@ export default class LevelManager {
   }
 
   /**
-   * 创建关卡生成器（Generator）
-   * 将生成过程拆分为多个可中断的步骤
-   */
+  * 创建关卡生成器（Generator）
+  * 将生成过程拆分为多个可中断的步骤
+  */
   *createLevelGenerator(levelNumber) {
     const screenWidth = canvas.width;
     const screenHeight = canvas.height;
-    const generator = USE_REVERSE_GENERATOR ? ReverseLevelGenerator : LevelGenerator;
-    const params = generator.getDifficultyParams(levelNumber);
-    const boardRect = getBoardRect(screenWidth, screenHeight);
+    ReverseLevelGenerator.getDifficultyParams(levelNumber);
     
     yield { step: 'init', progress: 0.05 };
     
-    // 逆向填空算法通常一次就能生成有效关卡
-    if (USE_REVERSE_GENERATOR) {
-      const levelData = ReverseLevelGenerator.generate(levelNumber, screenWidth, screenHeight);
-      return { blocks: levelData.blocks, total: levelData.total };
-    }
-    
-    // 传统算法：尝试生成（最多6次）
-    let lastBlocks = [];
-    const maxAttempts = 6;
-    
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const seed = LevelGenerator.getSeed(levelNumber, attempt);
-      
-      // 生成布局（这是最耗时的部分，但很难再拆分）
-      const blocks = LevelGenerator.generateRotatedGridDominoLayout(
-        params,
-        seed,
-        screenWidth,
-        screenHeight,
-        boardRect
-      );
-      lastBlocks = blocks;
-      
-      yield { step: 'generate', attempt, progress: 0.1 + attempt * 0.1 };
-      
-      // 检查是否可解
-      if (blocks._solvable === true) {
-        return { blocks, total: blocks.length };
-      }
-      
-      yield { step: 'validate', attempt, progress: 0.2 + attempt * 0.1 };
-      
-      // 验证
-      if (LevelGenerator.validateLevel(blocks, screenWidth, screenHeight, seed)) {
-        return { blocks, total: blocks.length };
-      }
-      
-      yield { step: 'retry', attempt, progress: 0.3 + attempt * 0.1 };
-    }
-    
-    return { blocks: lastBlocks, total: lastBlocks.length };
+    const levelData = ReverseLevelGenerator.generate(levelNumber, screenWidth, screenHeight);
+    return { blocks: levelData.blocks, total: levelData.total };
   }
 
   /**

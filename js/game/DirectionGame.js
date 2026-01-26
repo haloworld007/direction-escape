@@ -39,6 +39,8 @@ export default class DirectionGame {
     // 游戏状态
     this.state = 'menu'; // menu, playing, victory, defeat
     this.aniId = 0;
+    this.pendingStartLevel = null;
+    this.pendingStartTimer = null;
 
     // 道具使用模式
     this.propMode = null; // null, 'grab', 'flip', 'shuffle'
@@ -589,16 +591,38 @@ export default class DirectionGame {
    */
   startLevel(levelNumber) {
     const databus = GameGlobal.databus;
-
     // 检查关卡是否已预加载
     const isPreloaded = this.levelManager.isPreloaded(levelNumber);
     
     if (!isPreloaded) {
-      // 关卡未预加载，显示加载提示后延迟执行
+      // 关卡未预加载，等待 Worker 生成完成，避免同步生成阻塞
+      if (this.levelManager.isPreloading(levelNumber)) {
+        console.log(`[DirectionGame] 关卡 ${levelNumber} 生成中，等待完成...`);
+        if (this.pendingStartLevel === levelNumber && this.pendingStartTimer) {
+          return;
+        }
+        this.pendingStartLevel = levelNumber;
+        this.modalRenderer.showToast('关卡生成中...', 10000);
+
+        const checkReady = () => {
+          if (this.levelManager.isPreloaded(levelNumber)) {
+            this.pendingStartLevel = null;
+            clearTimeout(this.pendingStartTimer);
+            this.pendingStartTimer = null;
+            this.modalRenderer.hideToast();
+            this._doStartLevel(levelNumber);
+            return;
+          }
+          this.pendingStartTimer = setTimeout(checkReady, 120);
+        };
+
+        this.pendingStartTimer = setTimeout(checkReady, 120);
+        return;
+      }
+
       console.log(`[DirectionGame] 关卡 ${levelNumber} 未预加载，开始同步生成...`);
       this.modalRenderer.showToast('关卡生成中...', 10000);
       
-      // 延迟一帧让 UI 渲染加载提示
       setTimeout(() => {
         this._doStartLevel(levelNumber);
         this.modalRenderer.hideToast();
@@ -606,6 +630,12 @@ export default class DirectionGame {
       return;
     }
 
+    if (this.pendingStartTimer) {
+      clearTimeout(this.pendingStartTimer);
+      this.pendingStartTimer = null;
+    }
+    this.pendingStartLevel = null;
+    this.modalRenderer.hideToast();
     this._doStartLevel(levelNumber);
   }
 

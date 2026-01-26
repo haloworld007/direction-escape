@@ -1605,10 +1605,10 @@ const ReverseLevelGenerator = {
 
     console.log(`[ReverseLevelGenerator Worker] 生成关卡 ${levelNumber}, 目标方块数: ${params.blockCount}, 阶段: ${params.phaseName}`);
 
-    const blocks = this.generateByReverseFilling(params, seed, screenWidth, screenHeight, boardRect);
+    const result = this.generateWithValidation(params, seed, screenWidth, screenHeight, boardRect);
 
-    console.log(`[ReverseLevelGenerator Worker] 关卡 ${levelNumber} 生成完成，方块数: ${blocks.length}`);
-    return { blocks, total: blocks.length };
+    console.log(`[ReverseLevelGenerator Worker] 关卡 ${levelNumber} 生成完成，方块数: ${result.blocks.length}`);
+    return { blocks: result.blocks, total: result.blocks.length };
   },
 
   getSeed(levelNumber, attempt) {
@@ -1634,75 +1634,99 @@ const ReverseLevelGenerator = {
     }
   },
 
+  generateWithValidation(params, seed, screenWidth, screenHeight, boardRect) {
+    const maxAttempts = Number.isFinite(params.maxGenerateAttempts) ? params.maxGenerateAttempts : 6;
+    const maxTotalTimeMs = Number.isFinite(params.maxGenerateTimeMs) ? params.maxGenerateTimeMs : 3000;
+    const startTime = Date.now();
+    let best = null;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (Date.now() - startTime > maxTotalTimeMs) break;
+      const attemptSeed = seed + attempt * 131;
+      const result = this.generateByReverseFilling(params, attemptSeed, screenWidth, screenHeight, boardRect);
+
+      if (!result || !result.blocks || result.blocks.length === 0) continue;
+
+      const stats = this.validateAndRecordStats(result.blocks, screenWidth, screenHeight, result.grid);
+      const directionDistribution = this.getDirectionDistribution(result.blocks);
+      const difficultyScore = this.computeDifficultyScore(stats, directionDistribution);
+      const verdict = this.isDifficultyAcceptable(params, stats, directionDistribution, difficultyScore);
+
+      result.blocks._stats = stats;
+      result.blocks._difficulty = difficultyScore;
+      result.blocks._directionDistribution = directionDistribution;
+      result.blocks._layoutProfile = result.layoutProfile ? result.layoutProfile.name : null;
+
+      if (verdict.ok) {
+        return { blocks: result.blocks };
+      }
+
+      if (!best || verdict.distance < best.distance) {
+        best = { blocks: result.blocks, distance: verdict.distance };
+      }
+    }
+
+    return best ? { blocks: best.blocks } : { blocks: [] };
+  },
+
   generateByReverseFilling(params, seed, screenWidth, screenHeight, boardRect) {
     const { blockCount, blockSize, depthFactor, animalTypes = 5 } = params;
     const rand = this.createSeededRandom(seed);
+    const maxGenerateTimeMs = Number.isFinite(params.maxGenerateTimeMs) ? params.maxGenerateTimeMs : 3000;
+    const startTime = Date.now();
 
     const shortSide = blockSize || BLOCK_SIZES.WIDTH;
     const grid = this.initializeGrid(shortSide, boardRect);
+    const layoutProfile = this.createLayoutProfile(params, rand, grid);
     
     if (grid.maxPossibleBlocks < 2) {
       console.warn('[ReverseLevelGenerator Worker] 棋盘太小，无法生成方块');
-      return [];
+      return { blocks: [], layoutProfile, grid };
     }
 
-    const targetCount = Math.min(blockCount, grid.maxPossibleBlocks);
-    const blocks = [];
-    const generationOrder = [];
+    const targetFillRate = Number.isFinite(params.targetFillRate) ? params.targetFillRate : 0.7;
+    const fillTarget = Math.floor(grid.maxPossibleBlocks * targetFillRate);
+    const targetCount = params.forceFillRate
+      ? Math.min(grid.maxPossibleBlocks, fillTarget)
+      : Math.min(blockCount, grid.maxPossibleBlocks, fillTarget);
 
-    let attempts = 0;
-    const maxAttempts = targetCount * 20;
+    const blocks = this.generateDenseLayout(
+      grid,
+      targetCount,
+      layoutProfile,
+      rand,
+      shortSide,
+      startTime,
+      maxGenerateTimeMs
+    );
 
-    while (blocks.length < targetCount && attempts < maxAttempts) {
-      attempts++;
-
-      const insertionResult = this.tryInsertBlock(grid, blocks, rand, depthFactor, shortSide, screenWidth, screenHeight);
-
-      if (insertionResult) {
-        blocks.push(insertionResult.block);
-        generationOrder.push(insertionResult.block);
-        grid.occupyBlock(insertionResult.block);
-      }
+    if (!blocks || blocks.length < targetCount) {
+      return { blocks: [], layoutProfile, grid };
     }
 
-    // 填充率检查和补充填充
-    const minFillRate = blockCount > 50 ? 0.55 : 0.3;
+    const peelResult = this.peelAssignDirections(
+      grid,
+      blocks,
+      params,
+      rand,
+      shortSide,
+      startTime,
+      maxGenerateTimeMs
+    );
+
+    if (!peelResult) {
+      return { blocks: [], layoutProfile, grid };
+    }
+
+    this.assignAnimalTypes(blocks, peelResult.order, animalTypes, rand);
+    blocks._solvable = true;
+
     const filledCells = blocks.length * 2;
     const totalCells = grid.cells.size;
-    const currentFillRate = totalCells > 0 ? filledCells / totalCells : 0;
-    
-    if (currentFillRate < minFillRate && blocks.length < grid.maxPossibleBlocks) {
-      console.log(`[ReverseLevelGenerator Worker] 填充率不足 (${(currentFillRate * 100).toFixed(1)}%)，尝试补充填充...`);
-      
-      const additionalAttempts = Math.min(50, (grid.maxPossibleBlocks - blocks.length) * 10);
-      let additionalInserted = 0;
-      
-      for (let i = 0; i < additionalAttempts && blocks.length < grid.maxPossibleBlocks; i++) {
-        const insertionResult = this.tryInsertBlock(
-          grid, blocks, rand, 1.0, shortSide, screenWidth, screenHeight
-        );
-
-        if (insertionResult) {
-          blocks.push(insertionResult.block);
-          generationOrder.push(insertionResult.block);
-          grid.occupyBlock(insertionResult.block);
-          additionalInserted++;
-        }
-      }
-      
-      if (additionalInserted > 0) {
-        console.log(`[ReverseLevelGenerator Worker] 补充填充了 ${additionalInserted} 个方块`);
-      }
-    }
-
-    this.assignAnimalTypes(blocks, generationOrder, animalTypes, rand);
-    blocks._solvable = true;
-    
-    // 记录填充率统计
-    const finalFillRate = totalCells > 0 ? (blocks.length * 2) / totalCells : 0;
+    const finalFillRate = totalCells > 0 ? filledCells / totalCells : 0;
     console.log(`[ReverseLevelGenerator Worker] 生成完成: 方块=${blocks.length}, 填充率=${(finalFillRate * 100).toFixed(1)}%`);
 
-    return blocks;
+    return { blocks, layoutProfile, grid };
   },
 
   initializeGrid(shortSide, boardRect) {
@@ -1749,6 +1773,7 @@ const ReverseLevelGenerator = {
 
     // 计算初始边界单元（棋盘物理边缘）
     let boundaryCells = this.findBoundaryCells(cells);
+    const edgeCells = boundaryCells.slice();
     
     // 边界单元 Set（用于快速查找和去重）
     const boundarySet = new Set(boundaryCells.map(c => c.key));
@@ -1759,6 +1784,7 @@ const ReverseLevelGenerator = {
     const grid = {
       cells,
       boundaryCells,
+      edgeCells,
       centerX,
       centerY,
       step,
@@ -1854,18 +1880,269 @@ const ReverseLevelGenerator = {
     return boundary;
   },
 
-  tryInsertBlock(grid, existingBlocks, rand, depthFactor, shortSide, screenWidth, screenHeight) {
+  generateDenseLayout(grid, targetCount, layoutProfile, rand, shortSide, startTime, maxGenerateTimeMs) {
+    const cells = Array.from(grid.cells.values());
+    const weightOf = (cell) => (layoutProfile ? layoutProfile.weight(cell) : 1);
+    const maxDist = Math.sqrt(
+      Math.pow(grid.safeBoardRect.width / 2, 2) + Math.pow(grid.safeBoardRect.height / 2, 2)
+    );
+    let bestBlocks = [];
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (Date.now() - startTime > maxGenerateTimeMs) break;
+      this.resetGridOccupancy(grid);
+      const blocks = [];
+
+      const ordered = cells.map(cell => ({
+        cell,
+        weight: weightOf(cell) + (rand() - 0.5) * 0.1
+      })).sort((a, b) => b.weight - a.weight);
+
+      const tryFill = (list) => {
+        for (const entry of list) {
+          if (Date.now() - startTime > maxGenerateTimeMs) break;
+          if (blocks.length >= targetCount) break;
+          const cell = entry.cell;
+          if (cell.occupied) continue;
+          const neighbors = this.getUnoccupiedNeighbors(grid, cell);
+          if (neighbors.length === 0) continue;
+
+          neighbors.sort((a, b) => (weightOf(b) - weightOf(a)) + (rand() - 0.5) * 0.05);
+          const neighbor = neighbors[0];
+          const axis = neighbor.row !== cell.row ? 'row' : 'col';
+          const block = this.createBlockFromCells(cell, neighbor, axis, shortSide, DIRECTIONS.UP, blocks.length, grid, maxDist);
+          blocks.push(block);
+          this.occupyBlockCells(grid, block);
+        }
+      };
+
+      tryFill(ordered);
+
+      if (blocks.length < targetCount) {
+        const shuffled = [...cells];
+        this.shuffleArray(shuffled, rand);
+        tryFill(shuffled.map(cell => ({ cell, weight: weightOf(cell) })));
+      }
+
+      if (blocks.length > bestBlocks.length) {
+        bestBlocks = blocks;
+      }
+
+      if (blocks.length >= targetCount) {
+        return blocks;
+      }
+    }
+
+    this.resetGridOccupancy(grid);
+    for (const block of bestBlocks) {
+      this.occupyBlockCells(grid, block);
+    }
+
+    return bestBlocks;
+  },
+
+  getUnoccupiedNeighbors(grid, cell) {
+    const neighbors = [];
+    const offsets = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    for (const [dr, dc] of offsets) {
+      const neighbor = grid.getCell(cell.row + dr, cell.col + dc);
+      if (!neighbor || neighbor.occupied) continue;
+      neighbors.push(neighbor);
+    }
+    return neighbors;
+  },
+
+  createBlockFromCells(cellA, cellB, axis, shortSide, direction, index, grid, maxDist) {
+    const gridRow = axis === 'row' ? Math.min(cellA.row, cellB.row) : cellA.row;
+    const gridCol = axis === 'col' ? Math.min(cellA.col, cellB.col) : cellA.col;
+    const centerX = (cellA.x + cellB.x) / 2;
+    const centerY = (cellA.y + cellB.y) / 2;
+    const dims = this.getBlockDimensions(direction, shortSide);
+    const dx = centerX - grid.centerX;
+    const dy = centerY - grid.centerY;
+    const distNorm = maxDist > 0 ? Math.min(1, Math.sqrt(dx * dx + dy * dy) / maxDist) : 0;
+    return {
+      _id: index,
+      x: centerX - dims.width / 2,
+      y: centerY - dims.height / 2,
+      width: dims.width,
+      height: dims.height,
+      direction,
+      axis,
+      gridRow,
+      gridCol,
+      type: null,
+      size: shortSide,
+      depth: 0,
+      _distNorm: distNorm
+    };
+  },
+
+  applyBlockDirection(block, direction, shortSide) {
+    const dims = this.getBlockDimensions(direction, shortSide);
+    const cx = block.x + block.width / 2;
+    const cy = block.y + block.height / 2;
+    block.direction = direction;
+    block.width = dims.width;
+    block.height = dims.height;
+    block.x = cx - dims.width / 2;
+    block.y = cy - dims.height / 2;
+  },
+
+  peelAssignDirections(grid, blocks, params, rand, shortSide, startTime, maxGenerateTimeMs) {
+    const total = blocks.length;
+    const targetMix = (params && params.directionMixTarget) || { up: 0.25, right: 0.25, down: 0.25, left: 0.25 };
+    const targetCounts = {
+      [DIRECTIONS.UP]: targetMix.up * total,
+      [DIRECTIONS.RIGHT]: targetMix.right * total,
+      [DIRECTIONS.DOWN]: targetMix.down * total,
+      [DIRECTIONS.LEFT]: targetMix.left * total
+    };
+    const counts = { [DIRECTIONS.UP]: 0, [DIRECTIONS.RIGHT]: 0, [DIRECTIONS.DOWN]: 0, [DIRECTIONS.LEFT]: 0 };
+    const remaining = new Set(blocks);
+    const order = [];
+    const depthBias = Number.isFinite(params.depthFactor) ? params.depthFactor : 0.6;
+
+    while (order.length < total) {
+      if (Date.now() - startTime > maxGenerateTimeMs) return null;
+
+      let best = null;
+      for (const block of remaining) {
+        const dirs = this.getAvailableDirections(grid, block);
+        if (dirs.length === 0) continue;
+        for (const dir of dirs) {
+          const deficit = targetCounts[dir] - counts[dir];
+          const score = deficit + block._distNorm * depthBias + (rand() - 0.5) * 0.1;
+          if (!best || score > best.score) {
+            best = { block, direction: dir, score };
+          }
+        }
+      }
+
+      if (!best) return null;
+
+      this.releaseBlock(grid, best.block);
+      counts[best.direction] += 1;
+      order.push({ block: best.block, direction: best.direction });
+      remaining.delete(best.block);
+    }
+
+    for (let i = 0; i < order.length; i++) {
+      const item = order[i];
+      this.applyBlockDirection(item.block, item.direction, shortSide);
+      item.block.depth = i;
+    }
+
+    return { order };
+  },
+
+  getAvailableDirections(grid, block) {
+    const dirs = [];
+    if (block.axis === 'row') {
+      if (this.isPathClearToEdgeForDirection(grid, block, DIRECTIONS.UP)) dirs.push(DIRECTIONS.UP);
+      if (this.isPathClearToEdgeForDirection(grid, block, DIRECTIONS.DOWN)) dirs.push(DIRECTIONS.DOWN);
+    } else if (block.axis === 'col') {
+      if (this.isPathClearToEdgeForDirection(grid, block, DIRECTIONS.LEFT)) dirs.push(DIRECTIONS.LEFT);
+      if (this.isPathClearToEdgeForDirection(grid, block, DIRECTIONS.RIGHT)) dirs.push(DIRECTIONS.RIGHT);
+    }
+    return dirs;
+  },
+
+  releaseBlock(grid, block) {
+    const cells = this.getBlockCells(block);
+    if (!cells) return;
+    for (const c of cells) {
+      const cell = grid.getCell(c.row, c.col);
+      if (cell) {
+        cell.occupied = false;
+        cell.blockId = null;
+      }
+    }
+  },
+
+  occupyBlockCells(grid, block) {
+    const cells = this.getBlockCells(block);
+    if (!cells) return;
+    for (const c of cells) {
+      const cell = grid.getCell(c.row, c.col);
+      if (cell) {
+        cell.occupied = true;
+        cell.blockId = block._id;
+      }
+    }
+  },
+
+  resetGridOccupancy(grid) {
+    for (const cell of grid.cells.values()) {
+      cell.occupied = false;
+      cell.blockId = null;
+    }
+  },
+
+  isPathClearToEdgeForDirection(grid, block, direction) {
+    if (!Number.isFinite(block.gridRow) || !Number.isFinite(block.gridCol)) return false;
+    if (!block.axis) return false;
+
+    if (block.axis === 'row') {
+      if (direction === DIRECTIONS.UP) {
+        let row = block.gridRow - 1;
+        while (true) {
+          const cell = grid.getCell(row, block.gridCol);
+          if (!cell) return true;
+          if (cell.occupied) return false;
+          row -= 1;
+        }
+      }
+      if (direction === DIRECTIONS.DOWN) {
+        let row = block.gridRow + 2;
+        while (true) {
+          const cell = grid.getCell(row, block.gridCol);
+          if (!cell) return true;
+          if (cell.occupied) return false;
+          row += 1;
+        }
+      }
+    }
+
+    if (block.axis === 'col') {
+      if (direction === DIRECTIONS.LEFT) {
+        let col = block.gridCol - 1;
+        while (true) {
+          const cell = grid.getCell(block.gridRow, col);
+          if (!cell) return true;
+          if (cell.occupied) return false;
+          col -= 1;
+        }
+      }
+      if (direction === DIRECTIONS.RIGHT) {
+        let col = block.gridCol + 2;
+        while (true) {
+          const cell = grid.getCell(block.gridRow, col);
+          if (!cell) return true;
+          if (cell.occupied) return false;
+          col += 1;
+        }
+      }
+    }
+
+    return false;
+  },
+
+  tryInsertBlock(grid, existingBlocks, rand, depthFactor, shortSide, screenWidth, screenHeight, layoutProfile, params) {
     const preferGap = rand() < depthFactor;
     
     const maxTries = 50;
     for (let i = 0; i < maxTries; i++) {
-      const entry = this.selectEntryPoint(grid, rand, preferGap, existingBlocks, depthFactor);
+      const entry = this.selectEntryPoint(grid, rand, preferGap, existingBlocks, depthFactor, layoutProfile, params);
       if (!entry) continue;
 
       const slideResult = this.simulateSlide(grid, entry, existingBlocks, shortSide, screenWidth, screenHeight);
 
       if (slideResult && slideResult.valid) {
         const block = this.createBlockFromSlide(slideResult, shortSide, existingBlocks.length);
+        if (!this.isPathClearToEdge(grid, block)) {
+          continue;
+        }
         return { block, slideResult };
       }
     }
@@ -1873,8 +2150,10 @@ const ReverseLevelGenerator = {
     return null;
   },
 
-  selectEntryPoint(grid, rand, preferGap, existingBlocks, depthFactor = 0.5) {
-    const availableBoundary = grid.boundaryCells.filter(cell => !cell.occupied);
+  selectEntryPoint(grid, rand, preferGap, existingBlocks, depthFactor = 0.5, layoutProfile = null, params = null) {
+    const useEdgeEntries = !params || params.useEdgeEntries !== false;
+    const boundarySource = useEdgeEntries && grid.edgeCells ? grid.edgeCells : grid.boundaryCells;
+    const availableBoundary = boundarySource.filter(cell => !cell.occupied);
     if (availableBoundary.length === 0) return null;
 
     let selectedCell;
@@ -1887,89 +2166,74 @@ const ReverseLevelGenerator = {
           const dist = Math.sqrt(dx * dx + dy * dy);
           minDist = Math.min(minDist, dist);
         }
-        return { cell, score: -minDist + rand() * 30 };
+        const layoutWeight = layoutProfile ? layoutProfile.weight(cell) : 1;
+        return { cell, score: (-minDist + rand() * 30) * layoutWeight };
       });
       scored.sort((a, b) => b.score - a.score);
       // 从前几个高分中随机选择，增加变化
       const topN = Math.min(5, scored.length);
       selectedCell = scored[Math.floor(rand() * topN)].cell;
     } else {
-      selectedCell = availableBoundary[Math.floor(rand() * availableBoundary.length)];
+      const scored = availableBoundary.map(cell => {
+        const layoutWeight = layoutProfile ? layoutProfile.weight(cell) : 1;
+        return { cell, score: rand() * layoutWeight };
+      });
+      scored.sort((a, b) => b.score - a.score);
+      const topN = Math.min(8, scored.length);
+      selectedCell = scored[Math.floor(rand() * topN)].cell;
     }
 
-    // ========== 关键改进：方向多样化 ==========
-    // 随机选择轴向（row 或 col），而不是仅基于位置
-    let axis;
-    if (rand() < 0.5) {
-      axis = 'row';
-    } else {
-      axis = 'col';
-    }
-    
-    // 检查是否有有效的邻居来组成双格方块
-    let neighbor = this.findNeighborForPair(grid, selectedCell, axis);
-    if (!neighbor) {
-      // 尝试另一个轴向
-      axis = axis === 'row' ? 'col' : 'row';
-      neighbor = this.findNeighborForPair(grid, selectedCell, axis);
-      if (!neighbor) return null;
+    // ========== 关键改进：方向多样化（基于已有方向分布） ==========
+    const directionBias = this.getDirectionBias(existingBlocks, params);
+    const axisOptions = [];
+
+    for (const axisCandidate of ['row', 'col']) {
+      const neighborCandidate = this.findNeighborForPair(grid, selectedCell, axisCandidate);
+      if (!neighborCandidate) continue;
+
+      let preferredDirection;
+      if (axisCandidate === 'row') {
+        preferredDirection = selectedCell.y < grid.centerY ? DIRECTIONS.UP : DIRECTIONS.DOWN;
+      } else {
+        preferredDirection = selectedCell.x < grid.centerX ? DIRECTIONS.LEFT : DIRECTIONS.RIGHT;
+      }
+
+      axisOptions.push({
+        axis: axisCandidate,
+        neighbor: neighborCandidate,
+        preferredDirection,
+        bias: directionBias[preferredDirection] || 0
+      });
     }
 
-    // ========== 关键改进：方向随机化 + 深度控制 + lane 冲突检测 ==========
-    // outwardChance: 朝外方向的概率（朝外 = 可直接消除）
-    // depthFactor 越高，朝内的概率越大 → 产生更多阻挡
-    const outwardChance = 1 - depthFactor * 0.7; // depthFactor=0 → 100% 朝外; depthFactor=1 → 30% 朝外
-    
+    if (axisOptions.length === 0) return null;
+
+    axisOptions.sort((a, b) => (b.bias + rand() * 0.05) - (a.bias + rand() * 0.05));
+    const chosen = axisOptions[0];
+    const axis = chosen.axis;
+    const neighbor = chosen.neighbor;
+
+    // ========== 固定朝外方向 + lane 冲突检测 ==========
     let direction;
-    const goOutward = rand() < outwardChance;
-    
-    // 计算方块的 gridRow/gridCol
     const gridRow = axis === 'row' ? Math.min(selectedCell.row, neighbor.row) : selectedCell.row;
     const gridCol = axis === 'col' ? Math.min(selectedCell.col, neighbor.col) : selectedCell.col;
     
     if (axis === 'row') {
-      // row 轴方块：可以朝 UP 或 DOWN
-      const isAboveCenter = selectedCell.y < grid.centerY;
-      let preferredDirection;
-      if (goOutward) {
-        // 朝外：远离中心的方向
-        preferredDirection = isAboveCenter ? DIRECTIONS.UP : DIRECTIONS.DOWN;
-      } else {
-        // 朝内：朝向中心的方向（会被其他方块阻挡）
-        preferredDirection = isAboveCenter ? DIRECTIONS.DOWN : DIRECTIONS.UP;
-      }
-      
-      // **关键：检查同一 lane 是否有对向方块**
+      const preferredDirection = chosen.preferredDirection;
       const laneDirection = this.getLaneDirection(existingBlocks, 'row', gridCol);
-      if (laneDirection !== null) {
-        // 该 lane 已有方块，必须使用相同方向
-        direction = laneDirection;
-      } else {
-        direction = preferredDirection;
-      }
+      direction = laneDirection !== null ? laneDirection : preferredDirection;
     } else {
-      // col 轴方块：可以朝 LEFT 或 RIGHT
-      const isLeftOfCenter = selectedCell.x < grid.centerX;
-      let preferredDirection;
-      if (goOutward) {
-        // 朝外：远离中心
-        preferredDirection = isLeftOfCenter ? DIRECTIONS.LEFT : DIRECTIONS.RIGHT;
-      } else {
-        // 朝内：朝向中心
-        preferredDirection = isLeftOfCenter ? DIRECTIONS.RIGHT : DIRECTIONS.LEFT;
-      }
-      
-      // **关键：检查同一 lane 是否有对向方块**
+      const preferredDirection = chosen.preferredDirection;
       const laneDirection = this.getLaneDirection(existingBlocks, 'col', gridRow);
-      if (laneDirection !== null) {
-        // 该 lane 已有方块，必须使用相同方向
-        direction = laneDirection;
-      } else {
-        direction = preferredDirection;
-      }
+      direction = laneDirection !== null ? laneDirection : preferredDirection;
     }
 
     return { cell: selectedCell, neighbor, direction, axis };
+  },
+
+  isPathClearToEdge(grid, block) {
+    if (!block || block.direction === undefined || block.direction === null) return false;
+    return this.isPathClearToEdgeForDirection(grid, block, block.direction);
   },
   
   /**
@@ -2172,6 +2436,248 @@ const ReverseLevelGenerator = {
     }
   },
 
+  buildDependencyGraphStats(blocks) {
+    const n = blocks.length;
+    if (n === 0) {
+      return { avgDepth: 0, maxDepth: 0, removableCount: 0, removableRatio: 0 };
+    }
+
+    const nodes = blocks.map((block, index) => ({
+      id: index,
+      block,
+      blockedBy: [],
+      blocking: [],
+      inDegree: 0,
+      depth: -1
+    }));
+
+    for (let i = 0; i < n; i++) {
+      const target = blocks[i];
+      for (let j = 0; j < n; j++) {
+        if (i === j) continue;
+        const other = blocks[j];
+        if (this.isDirectBlocker(target, other)) {
+          nodes[i].blockedBy.push(j);
+          nodes[i].inDegree++;
+          nodes[j].blocking.push(i);
+        }
+      }
+    }
+
+    const queue = [];
+    for (const node of nodes) {
+      if (node.inDegree === 0) {
+        node.depth = 0;
+        queue.push(node);
+      }
+    }
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      for (const blockedId of current.blocking) {
+        const blockedNode = nodes[blockedId];
+        const newDepth = current.depth + 1;
+        if (blockedNode.depth < 0 || blockedNode.depth < newDepth) {
+          blockedNode.depth = newDepth;
+        }
+        const allBlockersReady = blockedNode.blockedBy.every(id => nodes[id].depth >= 0);
+        if (allBlockersReady && !queue.includes(blockedNode)) {
+          queue.push(blockedNode);
+        }
+      }
+    }
+
+    let totalDepth = 0;
+    let validCount = 0;
+    let maxDepth = 0;
+    let removableCount = 0;
+
+    for (const node of nodes) {
+      if (node.inDegree === 0) removableCount++;
+      if (node.depth >= 0) {
+        totalDepth += node.depth;
+        validCount++;
+        maxDepth = Math.max(maxDepth, node.depth);
+      }
+    }
+
+    return {
+      avgDepth: validCount > 0 ? totalDepth / validCount : 0,
+      maxDepth,
+      removableCount,
+      removableRatio: n > 0 ? removableCount / n : 0
+    };
+  },
+
+  isDirectBlocker(target, other) {
+    if (!target || !other) return false;
+    if (target.axis !== other.axis) return false;
+
+    if (target.axis === 'row') {
+      if (target.gridCol !== other.gridCol) return false;
+      const delta = this.getGridDelta(target.direction);
+      if (delta.row < 0) {
+        return other.gridRow < target.gridRow;
+      }
+      return other.gridRow > target.gridRow + 1;
+    }
+
+    if (target.axis === 'col') {
+      if (target.gridRow !== other.gridRow) return false;
+      const delta = this.getGridDelta(target.direction);
+      if (delta.col < 0) {
+        return other.gridCol < target.gridCol;
+      }
+      return other.gridCol > target.gridCol + 1;
+    }
+
+    return false;
+  },
+
+  validateAndRecordStats(blocks, screenWidth, screenHeight, grid) {
+    const graphStats = this.buildDependencyGraphStats(blocks);
+    const filledCells = blocks.length * 2;
+    const totalCells = grid.cells.size;
+    const fillRate = totalCells > 0 ? filledCells / totalCells : 0;
+    return {
+      avgDepth: graphStats.avgDepth,
+      maxDepth: graphStats.maxDepth,
+      removableCount: graphStats.removableCount,
+      removableRatio: graphStats.removableRatio,
+      fillRate
+    };
+  },
+
+  getDirectionBias(existingBlocks, params) {
+    const target = (params && params.directionMixTarget) || { up: 0.25, right: 0.25, down: 0.25, left: 0.25 };
+    const counts = { [DIRECTIONS.UP]: 0, [DIRECTIONS.RIGHT]: 0, [DIRECTIONS.DOWN]: 0, [DIRECTIONS.LEFT]: 0 };
+    for (const block of existingBlocks) {
+      counts[block.direction] = (counts[block.direction] || 0) + 1;
+    }
+    const total = existingBlocks.length || 1;
+    const ratios = {
+      up: counts[DIRECTIONS.UP] / total,
+      right: counts[DIRECTIONS.RIGHT] / total,
+      down: counts[DIRECTIONS.DOWN] / total,
+      left: counts[DIRECTIONS.LEFT] / total
+    };
+    return {
+      [DIRECTIONS.UP]: target.up - ratios.up,
+      [DIRECTIONS.RIGHT]: target.right - ratios.right,
+      [DIRECTIONS.DOWN]: target.down - ratios.down,
+      [DIRECTIONS.LEFT]: target.left - ratios.left
+    };
+  },
+
+  getDirectionDistribution(blocks) {
+    const counts = { [DIRECTIONS.UP]: 0, [DIRECTIONS.RIGHT]: 0, [DIRECTIONS.DOWN]: 0, [DIRECTIONS.LEFT]: 0 };
+    for (const block of blocks) {
+      counts[block.direction] = (counts[block.direction] || 0) + 1;
+    }
+    const total = blocks.length || 1;
+    const ratios = {
+      up: counts[DIRECTIONS.UP] / total,
+      right: counts[DIRECTIONS.RIGHT] / total,
+      down: counts[DIRECTIONS.DOWN] / total,
+      left: counts[DIRECTIONS.LEFT] / total
+    };
+    return { counts, ratios };
+  },
+
+  computeDifficultyScore(stats, directionDistribution) {
+    const avgDepthNorm = Math.min(1, stats.avgDepth / 8);
+    const maxDepthNorm = Math.min(1, stats.maxDepth / 16);
+    const removablePenalty = Math.min(1, Math.max(0, 1 - stats.removableRatio));
+    const maxDirRatio = Math.max(
+      directionDistribution.ratios.up,
+      directionDistribution.ratios.right,
+      directionDistribution.ratios.down,
+      directionDistribution.ratios.left
+    );
+    const diversity = Math.max(0, Math.min(1, 1 - (maxDirRatio - 0.25) / 0.75));
+    const score = 100 * (0.4 * avgDepthNorm + 0.3 * maxDepthNorm + 0.2 * removablePenalty + 0.1 * diversity);
+    return Math.round(score * 10) / 10;
+  },
+
+  isDifficultyAcceptable(params, stats, directionDistribution, difficultyScore) {
+    const target = params.targetDifficulty || 0;
+    const tolerance = Number.isFinite(params.targetDifficultyTolerance) ? params.targetDifficultyTolerance : 6;
+    const minScore = Math.max(0, target - tolerance);
+    const maxScore = target + tolerance;
+
+    const maxDirRatio = Math.max(
+      directionDistribution.ratios.up,
+      directionDistribution.ratios.right,
+      directionDistribution.ratios.down,
+      directionDistribution.ratios.left
+    );
+    const directionOk = maxDirRatio <= (params.maxDirectionRatio || 0.7);
+
+    const avgDepthOk = !params.depthTargetRange ||
+      (stats.avgDepth >= params.depthTargetRange[0] && stats.avgDepth <= params.depthTargetRange[1]);
+    const removableOk = !params.removableRatioTarget ||
+      (stats.removableRatio >= params.removableRatioTarget[0] && stats.removableRatio <= params.removableRatioTarget[1]);
+    const scoreOk = target === 0 || (difficultyScore >= minScore && difficultyScore <= maxScore);
+
+    const ok = directionOk && avgDepthOk && removableOk && scoreOk;
+    const distance = Math.abs(difficultyScore - target);
+    return { ok, distance };
+  },
+
+  createLayoutProfile(params, rand, grid) {
+    const profiles = params.layoutProfiles && params.layoutProfiles.length
+      ? params.layoutProfiles
+      : ['uniform', 'ring', 'diagonalBand', 'twoLumps', 'centerHollow'];
+    const name = params.layoutProfile || profiles[Math.floor(rand() * profiles.length)];
+    const centerX = grid.centerX + (rand() - 0.5) * grid.safeBoardRect.width * 0.2;
+    const centerY = grid.centerY + (rand() - 0.5) * grid.safeBoardRect.height * 0.2;
+    const maxR = Math.max(grid.safeBoardRect.width, grid.safeBoardRect.height) * 0.5;
+    const rotation = rand() * Math.PI * 2;
+    const ringBand = 0.55 + rand() * 0.2;
+    const ringSigma = 0.12;
+    const bandWidth = maxR * (0.18 + rand() * 0.08);
+    const lumpsOffset = maxR * (0.35 + rand() * 0.1);
+
+    const weight = (cell) => {
+      const dx = cell.x - centerX;
+      const dy = cell.y - centerY;
+      const r = Math.sqrt(dx * dx + dy * dy) / (maxR || 1);
+
+      if (name === 'ring') {
+        const d = r - ringBand;
+        return Math.exp(-(d * d) / (2 * ringSigma * ringSigma)) + 0.2;
+      }
+
+      if (name === 'diagonalBand') {
+        const cos = Math.cos(rotation);
+        const sin = Math.sin(rotation);
+        const nx = dx * cos - dy * sin;
+        const ny = dx * sin + dy * cos;
+        const dist = Math.abs(ny);
+        return Math.max(0.2, 1 - dist / bandWidth);
+      }
+
+      if (name === 'twoLumps') {
+        const c1x = centerX - lumpsOffset;
+        const c2x = centerX + lumpsOffset;
+        const c1y = centerY + lumpsOffset * 0.3;
+        const c2y = centerY - lumpsOffset * 0.3;
+        const d1 = Math.hypot(cell.x - c1x, cell.y - c1y);
+        const d2 = Math.hypot(cell.x - c2x, cell.y - c2y);
+        const sigma = maxR * 0.35;
+        return Math.max(0.2, Math.exp(-(d1 * d1) / (2 * sigma * sigma)) + Math.exp(-(d2 * d2) / (2 * sigma * sigma)));
+      }
+
+      if (name === 'centerHollow') {
+        return Math.max(0.2, r);
+      }
+
+      return 1;
+    };
+
+    return { name, weight };
+  },
+
   isInsideSafeRect(x, y, width, height, safeRect) {
     return x >= safeRect.x &&
       x + width <= safeRect.x + safeRect.width &&
@@ -2186,9 +2692,17 @@ const ReverseLevelGenerator = {
         phaseName: '教学关',
         blockCount: 6,
         blockSize: 28,
-        depthFactor: 0,
+        depthFactor: 0.05,
         animalTypes: 3,
-        scale: 1.5
+        scale: 1.5,
+        targetDifficulty: 10,
+        targetDifficultyTolerance: 4,
+        depthTargetRange: [0, 1.8],
+        removableRatioTarget: [0.6, 1.0],
+        maxDirectionRatio: 0.9,
+        directionMixTarget: { up: 0.3, right: 0.25, down: 0.25, left: 0.2 },
+        layoutProfiles: ['uniform', 'centerHollow'],
+        maxGenerateAttempts: 3
       };
     }
 
@@ -2196,23 +2710,35 @@ const ReverseLevelGenerator = {
     if (level === 2) {
       return {
         phaseName: '难度飙升',
-        blockCount: 110,
+        blockCount: 120,
         blockSize: 16,
-        depthFactor: 0.75,    // 较高深度 → 更多阻挡关系
+        depthFactor: 0.9,     // 高深度 → 强依赖
         animalTypes: 4,
         scale: 1.0,
-        showWarning: true
+        showWarning: true,
+        targetDifficulty: 80,
+        targetDifficultyTolerance: 8,
+        depthTargetRange: [4.5, 7.5],
+        removableRatioTarget: [0.08, 0.22],
+        maxDirectionRatio: 0.7,
+        directionMixTarget: { up: 0.25, right: 0.25, down: 0.25, left: 0.25 },
+        layoutProfiles: ['ring', 'diagonalBand', 'twoLumps', 'centerHollow'],
+        maxGenerateAttempts: 3,
+        maxGenerateTimeMs: 2000,
+        useEdgeEntries: true,
+        targetFillRate: 0.85,
+        forceFillRate: true
       };
     }
 
     // Level 3+: 线性递增（从 Level 2 的难度起步，持续递增）
     const progress = Math.min(1, (level - 3) / 50); // 50关达到最大难度
     
-    // 方块数量: 115 -> 180（比 Level 2 的 110 略多起步）
-    const blockCount = Math.round(115 + progress * 65);
+    // 方块数量: 120 -> 190
+    const blockCount = Math.round(120 + progress * 70);
     
-    // 深度因子: 0.75 -> 0.95（从 Level 2 的 0.75 起步，确保难度递增）
-    const depthFactor = 0.75 + progress * 0.2;
+    // 深度因子: 0.90 -> 0.95
+    const depthFactor = 0.9 + progress * 0.05;
     
     const animalTypes = level < 10 ? 4 : 5;
 
@@ -2224,39 +2750,49 @@ const ReverseLevelGenerator = {
     const blockCountAdjust = isReliefLevel ? -10 : cyclePosition * 3;
     const depthAdjust = isReliefLevel ? -0.05 : cyclePosition * 0.01;
 
+    const targetDifficulty = 80 + (level - 2) * 0.5;
+    const avgDepthTarget = 4.8 + progress * 2.2;
+    const removableTargetBase = Math.max(0.1, 0.2 - progress * 0.08);
+
     return {
       phaseName: level <= 10 ? '成长期' : level <= 30 ? '挑战期' : level <= 60 ? '大师期' : '传奇期',
-      blockCount: Math.max(110, Math.min(200, blockCount + blockCountAdjust)),
+      blockCount: Math.max(120, Math.min(200, blockCount + blockCountAdjust)),
       blockSize: 16,
-      depthFactor: Math.max(0.7, Math.min(0.95, depthFactor + depthAdjust)),
+      depthFactor: Math.max(0.85, Math.min(0.95, depthFactor + depthAdjust)),
       animalTypes,
       scale: 1.0,
-      isReliefLevel
+      isReliefLevel,
+      targetDifficulty,
+      targetDifficultyTolerance: 6,
+      depthTargetRange: [avgDepthTarget - 1.2, avgDepthTarget + 1.2],
+      removableRatioTarget: [Math.max(0.06, removableTargetBase - 0.05), Math.min(0.28, removableTargetBase + 0.05)],
+      maxDirectionRatio: 0.7,
+      directionMixTarget: { up: 0.25, right: 0.25, down: 0.25, left: 0.25 },
+      layoutProfiles: ['ring', 'diagonalBand', 'twoLumps', 'centerHollow', 'uniform'],
+      maxGenerateAttempts: 6,
+      maxGenerateTimeMs: 2500,
+      useEdgeEntries: true,
+      targetFillRate: 0.78
     };
   }
 };
 
 // ==================== Worker 消息处理 ====================
 
-// 使用逆向填空生成器作为默认算法
-const USE_REVERSE_GENERATOR = true;
-
 worker.onMessage(function(msg) {
   if (msg.type === 'generate') {
-    const { levelNumber, screenWidth, screenHeight, requestId, useOldAlgorithm } = msg;
+    const { levelNumber, screenWidth, screenHeight, requestId } = msg;
     
     try {
       const startTime = Date.now();
       
-      // 选择生成算法
-      const generator = (USE_REVERSE_GENERATOR && !useOldAlgorithm) 
-        ? ReverseLevelGenerator 
-        : LevelGenerator;
+      // 仅使用逆向填空算法
+      const generator = ReverseLevelGenerator;
       
       const levelData = generator.generate(levelNumber, screenWidth, screenHeight);
       const duration = Date.now() - startTime;
       
-      console.log(`[Worker] 使用 ${generator === ReverseLevelGenerator ? '逆向填空' : '传统'} 算法生成关卡 ${levelNumber}，耗时 ${duration}ms`);
+      console.log(`[Worker] 使用 逆向填空 算法生成关卡 ${levelNumber}，耗时 ${duration}ms`);
       
       worker.postMessage({
         type: 'levelReady',
