@@ -100,7 +100,7 @@ export default class ReverseLevelGenerator {
 
       if (!result || !result.blocks || result.blocks.length === 0) continue;
 
-      const stats = this.validateAndRecordStats(result.blocks, screenWidth, screenHeight, result.grid);
+      const stats = this.validateAndRecordStats(result.blocks, screenWidth, screenHeight, result.grid, params);
       const directionDistribution = this.getDirectionDistribution(result.blocks);
       const difficultyScore = this.computeDifficultyScore(stats, directionDistribution);
       const verdict = this.isDifficultyAcceptable(params, stats, directionDistribution, difficultyScore);
@@ -151,7 +151,8 @@ export default class ReverseLevelGenerator {
       rand,
       shortSide,
       startTime,
-      maxGenerateTimeMs
+      maxGenerateTimeMs,
+      params
     );
 
     if (!blocks || blocks.length < targetCount) {
@@ -180,7 +181,7 @@ export default class ReverseLevelGenerator {
   /**
    * 使用 DependencyGraph 验证生成结果并记录统计
    */
-  static validateAndRecordStats(blocks, screenWidth, screenHeight, grid) {
+  static validateAndRecordStats(blocks, screenWidth, screenHeight, grid, params) {
     // 构建依赖图
     const graph = DependencyGraph.build(blocks, screenWidth, screenHeight);
     const graphStats = graph.getStats();
@@ -189,6 +190,8 @@ export default class ReverseLevelGenerator {
     const filledCells = blocks.length * 2; // 每个方块占 2 格
     const totalCells = grid.cells.size;
     const fillRate = totalCells > 0 ? filledCells / totalCells : 0;
+    const localStats = this.computeLocalDirectionStats(blocks, grid, params);
+    const lineStats = this.computeLineDirectionStats(blocks, params);
     
     return {
       avgDepth: graphStats.avgDepth,
@@ -197,8 +200,92 @@ export default class ReverseLevelGenerator {
       removableRatio: graphStats.removableRatio,
       fillRate,
       totalCells,
-      filledCells
+      filledCells,
+      maxLocalDirectionRatio: localStats.maxLocalDirectionRatio,
+      maxLineDirectionRatio: lineStats.maxLineDirectionRatio
     };
+  }
+
+  static computeLocalDirectionStats(blocks, grid, params) {
+    const localGrid = Number.isFinite(params && params.localDirectionGrid) ? params.localDirectionGrid : 3;
+    if (!grid || !grid.safeBoardRect || localGrid <= 1) {
+      return { maxLocalDirectionRatio: 0.25 };
+    }
+    const rect = grid.safeBoardRect;
+    const sectors = new Map();
+    const getSectorKey = (block) => {
+      if (rect.width <= 0 || rect.height <= 0) return '0,0';
+      const cx = block.x + block.width / 2;
+      const cy = block.y + block.height / 2;
+      const col = Math.min(localGrid - 1, Math.max(0, Math.floor(((cx - rect.x) / rect.width) * localGrid)));
+      const row = Math.min(localGrid - 1, Math.max(0, Math.floor(((cy - rect.y) / rect.height) * localGrid)));
+      return `${row},${col}`;
+    };
+
+    for (const block of blocks) {
+      const key = getSectorKey(block);
+      if (!sectors.has(key)) {
+        sectors.set(key, {
+          total: 0,
+          [DIRECTIONS.UP]: 0,
+          [DIRECTIONS.RIGHT]: 0,
+          [DIRECTIONS.DOWN]: 0,
+          [DIRECTIONS.LEFT]: 0
+        });
+      }
+      const stats = sectors.get(key);
+      stats.total += 1;
+      stats[block.direction] += 1;
+    }
+
+    let maxLocalDirectionRatio = 0;
+    for (const stats of sectors.values()) {
+      if (!stats.total) continue;
+      const localMax = Math.max(
+        stats[DIRECTIONS.UP],
+        stats[DIRECTIONS.RIGHT],
+        stats[DIRECTIONS.DOWN],
+        stats[DIRECTIONS.LEFT]
+      ) / stats.total;
+      if (localMax > maxLocalDirectionRatio) maxLocalDirectionRatio = localMax;
+    }
+
+    return { maxLocalDirectionRatio };
+  }
+
+  static computeLineDirectionStats(blocks, params) {
+    const minCount = Number.isFinite(params && params.lineDirectionMinCount) ? params.lineDirectionMinCount : 3;
+    const lines = new Map();
+    for (const block of blocks) {
+      const key = block.axis === 'row' ? `col:${block.gridCol}` : `row:${block.gridRow}`;
+      if (!lines.has(key)) {
+        lines.set(key, {
+          total: 0,
+          [DIRECTIONS.UP]: 0,
+          [DIRECTIONS.RIGHT]: 0,
+          [DIRECTIONS.DOWN]: 0,
+          [DIRECTIONS.LEFT]: 0
+        });
+      }
+      const stats = lines.get(key);
+      stats.total += 1;
+      stats[block.direction] += 1;
+    }
+
+    let maxLineDirectionRatio = 0;
+    for (const stats of lines.values()) {
+      if (stats.total < minCount) continue;
+      const localMax = Math.max(
+        stats[DIRECTIONS.UP],
+        stats[DIRECTIONS.RIGHT],
+        stats[DIRECTIONS.DOWN],
+        stats[DIRECTIONS.LEFT]
+      ) / stats.total;
+      if (localMax > maxLineDirectionRatio) maxLineDirectionRatio = localMax;
+    }
+
+    if (!maxLineDirectionRatio) maxLineDirectionRatio = 0.25;
+    return { maxLineDirectionRatio };
   }
 
   static getDirectionBias(existingBlocks, params) {
@@ -248,7 +335,11 @@ export default class ReverseLevelGenerator {
       directionDistribution.ratios.left
     );
     const diversity = Math.max(0, Math.min(1, 1 - (maxDirRatio - 0.25) / 0.75));
-    const score = 100 * (0.4 * avgDepthNorm + 0.3 * maxDepthNorm + 0.2 * removablePenalty + 0.1 * diversity);
+    const localMax = Number.isFinite(stats.maxLocalDirectionRatio) ? stats.maxLocalDirectionRatio : 1;
+    const lineMax = Number.isFinite(stats.maxLineDirectionRatio) ? stats.maxLineDirectionRatio : 1;
+    const localDiversity = Math.max(0, Math.min(1, 1 - (localMax - 0.25) / 0.75));
+    const lineDiversity = Math.max(0, Math.min(1, 1 - (lineMax - 0.25) / 0.75));
+    const score = 100 * (0.36 * avgDepthNorm + 0.27 * maxDepthNorm + 0.2 * removablePenalty + 0.07 * diversity + 0.05 * localDiversity + 0.05 * lineDiversity);
     return Math.round(score * 10) / 10;
   }
 
@@ -265,6 +356,10 @@ export default class ReverseLevelGenerator {
       directionDistribution.ratios.left
     );
     const directionOk = maxDirRatio <= (params.maxDirectionRatio || 0.7);
+    const localMaxDirRatio = Number.isFinite(stats.maxLocalDirectionRatio) ? stats.maxLocalDirectionRatio : 1;
+    const localDirectionOk = !params.maxLocalDirectionRatio || localMaxDirRatio <= params.maxLocalDirectionRatio;
+    const lineMaxDirRatio = Number.isFinite(stats.maxLineDirectionRatio) ? stats.maxLineDirectionRatio : 1;
+    const lineDirectionOk = !params.maxLineDirectionRatio || lineMaxDirRatio <= params.maxLineDirectionRatio;
 
     const avgDepthOk = !params.depthTargetRange ||
       (stats.avgDepth >= params.depthTargetRange[0] && stats.avgDepth <= params.depthTargetRange[1]);
@@ -272,7 +367,7 @@ export default class ReverseLevelGenerator {
       (stats.removableRatio >= params.removableRatioTarget[0] && stats.removableRatio <= params.removableRatioTarget[1]);
     const scoreOk = target === 0 || (difficultyScore >= minScore && difficultyScore <= maxScore);
 
-    const ok = directionOk && avgDepthOk && removableOk && scoreOk;
+    const ok = directionOk && localDirectionOk && lineDirectionOk && avgDepthOk && removableOk && scoreOk;
     const distance = Math.abs(difficultyScore - target);
     return { ok, distance };
   }
@@ -495,18 +590,26 @@ export default class ReverseLevelGenerator {
     return boundary;
   }
 
-  static generateDenseLayout(grid, targetCount, layoutProfile, rand, shortSide, startTime, maxGenerateTimeMs) {
+  static generateDenseLayout(grid, targetCount, layoutProfile, rand, shortSide, startTime, maxGenerateTimeMs, params) {
     const cells = Array.from(grid.cells.values());
     const weightOf = (cell) => (layoutProfile ? layoutProfile.weight(cell) : 1);
     const maxDist = Math.sqrt(
       Math.pow(grid.safeBoardRect.width / 2, 2) + Math.pow(grid.safeBoardRect.height / 2, 2)
     );
+    const axisBalanceWeight = Number.isFinite(params && params.axisBalanceWeight) ? params.axisBalanceWeight : 0.25;
     let bestBlocks = [];
 
     for (let attempt = 0; attempt < 3; attempt++) {
       if (Date.now() - startTime > maxGenerateTimeMs) break;
       this.resetGridOccupancy(grid);
       const blocks = [];
+      const axisCounts = { row: 0, col: 0 };
+      const axisBias = (axis) => {
+        const total = axisCounts.row + axisCounts.col;
+        if (!total) return 0;
+        const ratio = axisCounts[axis] / total;
+        return 0.5 - ratio;
+      };
 
       const ordered = cells.map(cell => ({
         cell,
@@ -522,12 +625,17 @@ export default class ReverseLevelGenerator {
           const neighbors = this.getUnoccupiedNeighbors(grid, cell);
           if (neighbors.length === 0) continue;
 
-          neighbors.sort((a, b) => (weightOf(b) - weightOf(a)) + (rand() - 0.5) * 0.05);
+          const neighborScore = (n) => {
+            const axis = n.row !== cell.row ? 'row' : 'col';
+            return weightOf(n) + axisBias(axis) * axisBalanceWeight + (rand() - 0.5) * 0.05;
+          };
+          neighbors.sort((a, b) => neighborScore(b) - neighborScore(a));
           const neighbor = neighbors[0];
           const axis = neighbor.row !== cell.row ? 'row' : 'col';
           const block = this.createBlockFromCells(cell, neighbor, axis, shortSide, DIRECTIONS.UP, blocks.length, grid, maxDist);
           blocks.push(block);
           this.occupyBlockCells(grid, block);
+          axisCounts[axis] += 1;
         }
       };
 
@@ -617,6 +725,49 @@ export default class ReverseLevelGenerator {
     const remaining = new Set(blocks);
     const order = [];
     const depthBias = Number.isFinite(params.depthFactor) ? params.depthFactor : 0.6;
+    const localGrid = Number.isFinite(params && params.localDirectionGrid) ? params.localDirectionGrid : 3;
+    const localWeight = Number.isFinite(params && params.localDirectionWeight) ? params.localDirectionWeight : 0.2;
+    const lineWeight = Number.isFinite(params && params.lineDirectionWeight) ? params.lineDirectionWeight : 0.2;
+    const rect = grid.safeBoardRect;
+    const sectorCounts = new Map();
+    const lineCounts = new Map();
+    const getSectorKey = (block) => {
+      if (!rect || rect.width <= 0 || rect.height <= 0 || localGrid <= 1) return '0,0';
+      const cx = block.x + block.width / 2;
+      const cy = block.y + block.height / 2;
+      const col = Math.min(localGrid - 1, Math.max(0, Math.floor(((cx - rect.x) / rect.width) * localGrid)));
+      const row = Math.min(localGrid - 1, Math.max(0, Math.floor(((cy - rect.y) / rect.height) * localGrid)));
+      return `${row},${col}`;
+    };
+    const getSectorStats = (key) => {
+      if (!sectorCounts.has(key)) {
+        sectorCounts.set(key, {
+          total: 0,
+          [DIRECTIONS.UP]: 0,
+          [DIRECTIONS.RIGHT]: 0,
+          [DIRECTIONS.DOWN]: 0,
+          [DIRECTIONS.LEFT]: 0
+        });
+      }
+      return sectorCounts.get(key);
+    };
+    const getLineKey = (block) => {
+      if (block.axis === 'row') return `col:${block.gridCol}`;
+      if (block.axis === 'col') return `row:${block.gridRow}`;
+      return 'unknown';
+    };
+    const getLineStats = (key) => {
+      if (!lineCounts.has(key)) {
+        lineCounts.set(key, {
+          total: 0,
+          [DIRECTIONS.UP]: 0,
+          [DIRECTIONS.RIGHT]: 0,
+          [DIRECTIONS.DOWN]: 0,
+          [DIRECTIONS.LEFT]: 0
+        });
+      }
+      return lineCounts.get(key);
+    };
 
     while (order.length < total) {
       if (Date.now() - startTime > maxGenerateTimeMs) return null;
@@ -625,11 +776,21 @@ export default class ReverseLevelGenerator {
       for (const block of remaining) {
         const dirs = this.getAvailableDirections(grid, block);
         if (dirs.length === 0) continue;
+        const sectorKey = getSectorKey(block);
+        const sectorStats = getSectorStats(sectorKey);
+        const lineKey = getLineKey(block);
+        const lineStats = getLineStats(lineKey);
         for (const dir of dirs) {
           const deficit = targetCounts[dir] - counts[dir];
-          const score = deficit + block._distNorm * depthBias + (rand() - 0.5) * 0.1;
+          const localTotal = sectorStats.total || 0;
+          const localRatio = localTotal ? sectorStats[dir] / localTotal : 0;
+          const localDeficit = localWeight ? (targetMix[dir] - localRatio) * localWeight : 0;
+          const lineTotal = lineStats.total || 0;
+          const lineRatio = lineTotal ? lineStats[dir] / lineTotal : 0;
+          const lineDeficit = lineWeight ? (targetMix[dir] - lineRatio) * lineWeight : 0;
+          const score = deficit + localDeficit + lineDeficit + block._distNorm * depthBias + (rand() - 0.5) * 0.1;
           if (!best || score > best.score) {
-            best = { block, direction: dir, score };
+            best = { block, direction: dir, score, sectorKey, lineKey };
           }
         }
       }
@@ -637,6 +798,12 @@ export default class ReverseLevelGenerator {
       if (!best) return null;
 
       this.releaseBlock(grid, best.block);
+      const sectorStats = getSectorStats(best.sectorKey);
+      sectorStats.total += 1;
+      sectorStats[best.direction] += 1;
+      const lineStats = getLineStats(best.lineKey);
+      lineStats.total += 1;
+      lineStats[best.direction] += 1;
       counts[best.direction] += 1;
       order.push({ block: best.block, direction: best.direction });
       remaining.delete(best.block);
@@ -1186,6 +1353,13 @@ export default class ReverseLevelGenerator {
         depthTargetRange: [0, 1.8],
         removableRatioTarget: [0.6, 1.0],
         maxDirectionRatio: 0.9,
+        maxLocalDirectionRatio: 0.9,
+        maxLineDirectionRatio: 0.9,
+        localDirectionGrid: 2,
+        localDirectionWeight: 0.1,
+        axisBalanceWeight: 0.2,
+        lineDirectionWeight: 0.15,
+        lineDirectionMinCount: 2,
         directionMixTarget: { up: 0.3, right: 0.25, down: 0.25, left: 0.2 },
         layoutProfiles: ['uniform', 'centerHollow'],
         maxGenerateAttempts: 3
@@ -1207,6 +1381,13 @@ export default class ReverseLevelGenerator {
         depthTargetRange: [4.5, 7.5],
         removableRatioTarget: [0.08, 0.22],
         maxDirectionRatio: 0.7,
+        maxLocalDirectionRatio: 0.65,
+        maxLineDirectionRatio: 0.7,
+        localDirectionGrid: 3,
+        localDirectionWeight: 0.35,
+        axisBalanceWeight: 0.35,
+        lineDirectionWeight: 0.45,
+        lineDirectionMinCount: 3,
         directionMixTarget: { up: 0.25, right: 0.25, down: 0.25, left: 0.25 },
         layoutProfiles: ['ring', 'diagonalBand', 'twoLumps', 'centerHollow'],
         maxGenerateAttempts: 3,
@@ -1237,9 +1418,10 @@ export default class ReverseLevelGenerator {
     const blockCountAdjust = isReliefLevel ? -10 : cyclePosition * 3;
     const depthAdjust = isReliefLevel ? -0.05 : cyclePosition * 0.01;
 
-    const targetDifficulty = 80 + (level - 2) * 0.5;
-    const avgDepthTarget = 4.8 + progress * 2.2;
+    const targetDifficulty = 80 + (level - 2) * 2;
+    const avgDepthTarget = 5.0 + progress * 2.6;
     const removableTargetBase = Math.max(0.1, 0.2 - progress * 0.08);
+    const targetFillRate = Math.min(0.9, 0.83 + progress * 0.05);
 
     return {
       phaseName: level <= 10 ? '成长期' : level <= 30 ? '挑战期' : level <= 60 ? '大师期' : '传奇期',
@@ -1254,12 +1436,19 @@ export default class ReverseLevelGenerator {
       depthTargetRange: [avgDepthTarget - 1.2, avgDepthTarget + 1.2],
       removableRatioTarget: [Math.max(0.06, removableTargetBase - 0.05), Math.min(0.28, removableTargetBase + 0.05)],
       maxDirectionRatio: 0.7,
+      maxLocalDirectionRatio: 0.6,
+      maxLineDirectionRatio: 0.65,
+      localDirectionGrid: 4,
+      localDirectionWeight: 0.5,
+      axisBalanceWeight: 0.35,
+      lineDirectionWeight: 0.5,
+      lineDirectionMinCount: 3,
       directionMixTarget: { up: 0.25, right: 0.25, down: 0.25, left: 0.25 },
       layoutProfiles: ['ring', 'diagonalBand', 'twoLumps', 'centerHollow', 'uniform'],
       maxGenerateAttempts: 6,
       maxGenerateTimeMs: 2500,
       useEdgeEntries: true,
-      targetFillRate: 0.78
+      targetFillRate
     };
   }
 
